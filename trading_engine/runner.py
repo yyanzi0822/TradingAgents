@@ -33,7 +33,7 @@ import logging
 import time
 from datetime import date
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from trading_engine.broker import Broker
 from trading_engine.config import RiskLimits, SizingPolicy
@@ -45,6 +45,7 @@ from trading_engine.reconcile import Reconciler, _market_date
 from trading_engine.risk import RiskEngine, client_order_id
 from trading_engine.sizing import intent_from_decision
 from trading_engine.stops import StopBook
+from trading_engine.takeprofit import TakeProfitBook
 from trading_engine.wash import WashSaleChecker
 
 logger = logging.getLogger(__name__)
@@ -292,6 +293,11 @@ class Runner:
                 outcome.signal = signal
                 intent = intent_from_decision(decision_id=decision_id, ticker=ticker, rating=signal,
                                               account=account, final_state=final_state, policy=self.sizing)
+                # Profit was taken on this position: a Buy must not buy the sold part back.
+                profit_taken = (signal in self.sizing.add_only_ratings and intent.target_weight is not None
+                                and bool(TakeProfitBook(self.ledger).taken(ticker)))
+                if profit_taken:
+                    intent = replace(intent, target_weight=None)
 
                 # Log the decision before the market can answer.
                 self.ledger.append("decision", {
@@ -318,7 +324,8 @@ class Runner:
                     outcome.action, outcome.detail = "rejected", "; ".join(result.reasons)
                     continue
                 if result.order is None:
-                    outcome.detail = "; ".join(result.reasons) or "no change"
+                    outcome.detail = ("profit already taken on this position; not adding to it" if profit_taken
+                                      else "; ".join(result.reasons) or "no change")
                     continue
 
                 o = result.order

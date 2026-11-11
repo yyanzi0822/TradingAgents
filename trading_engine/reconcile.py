@@ -37,6 +37,7 @@ from trading_engine.models import TERMINAL_STATUSES, OrderRequest, Side
 from trading_engine.notify import Notifier, NullNotifier
 from trading_engine.risk import client_order_id
 from trading_engine.stops import StopBook
+from trading_engine.takeprofit import TakeProfitBook
 from trading_engine.wash import WashSaleChecker
 
 MARKET_TZ = ZoneInfo("America/New_York")
@@ -68,7 +69,7 @@ class Reconciler:
         self.confirm = confirm
 
     def run(self, trade_date: str | None = None) -> list[str]:
-        return self.refresh_orders() + self.sync_stops(trade_date)
+        return self.refresh_orders() + self.take_profits(trade_date) + self.sync_stops(trade_date)
 
     # -- order status ---------------------------------------------------------
 
@@ -143,6 +144,90 @@ class Reconciler:
         if status.filled_quantity:
             return f"{status.ticker}: {what} partially filled {status.filled_quantity:g} of {status.quantity:g}"
         return f"{status.ticker}: {what} {status.status}"
+
+    # -- take profit ----------------------------------------------------------
+
+    def take_profits(self, trade_date: str | None = None) -> list[str]:
+        """Sell part of a position once it is up by a configured amount."""
+        levels = self.limits.take_profit_levels
+        if not levels:
+            return []
+        trade_date = trade_date or _market_date(None)
+        book = TakeProfitBook(self.ledger)
+        account = self.broker.get_account()
+        held = {t: h for t, h in account.holdings.items() if h.quantity > 0}
+        state = book.state()
+        if not self.dry_run:
+            for ticker in state:
+                if ticker not in held:
+                    book.reset(ticker)                 # position closed: next entry starts fresh
+        if self.kill_switch.active():
+            return []
+
+        notes: list[str] = []
+        open_orders: list[OrderStatus] | None = None
+        market_open: bool | None = None
+        for ticker, holding in sorted(held.items()):
+            entry = holding.avg_entry_price
+            done = state.get(ticker, {}).get("levels", set())
+            waiting = [i for i in range(len(levels)) if i not in done]
+            if not entry or not waiting:
+                continue
+            # The broker's own valuation is enough to rule most positions out.
+            if holding.market_value / holding.quantity < entry * (1 + min(levels[i][0] for i in waiting)) - 1e-9:
+                continue
+            price = self.broker.get_quote(ticker).price
+            gain = price / entry - 1
+            hit = [i for i in waiting if price >= entry * (1 + levels[i][0]) - 1e-9]
+            if not hit:
+                continue
+            if open_orders is None:
+                open_orders = self.broker.open_orders()
+            if any(o.ticker == ticker and not o.is_stop for o in open_orders):
+                notes.append(f"{ticker}: up {gain:+.1%}, take-profit waits for the open order to settle")
+                continue
+
+            base = state.get(ticker, {}).get("base", holding.quantity)
+            quantity = min(sum(float(math.floor(base * levels[i][1])) for i in hit), holding.quantity)
+            reached = " and ".join(f"+{levels[i][0]:.1%}" for i in hit)
+            summary = f"{ticker}: up {gain:+.1%} (take-profit at {reached})"
+            if quantity < 1:
+                notes.append(f"{summary}; position too small to sell a part of")
+                continue
+            if self.dry_run:
+                notes.append(f"{summary}; would sell {quantity:g} of {holding.quantity:g}")
+                continue
+            if market_open is None:
+                market_open = self.broker.is_market_open()
+            if self.require_market_open and not market_open:
+                notes.append(f"{summary}; market closed, checked again on the next run")
+                continue
+            if self.confirm and not self.confirm(f"{summary}. Sell {quantity:g} of {holding.quantity:g} at market?"):
+                self.ledger.append("declined", {"ticker": ticker, "trade_date": trade_date, "what": "take profit"})
+                notes.append(f"{summary}; declined by you")
+                continue
+
+            self.cancel_stops(ticker, open_orders)      # the stop reserves the shares
+            taken_so_far = len(self.ledger.records("take_profit"))
+            decision_id = f"{trade_date}|{ticker}|take-profit-{taken_so_far}"
+            order = OrderRequest(client_order_id=client_order_id(decision_id, ticker, Side.SELL),
+                                 ticker=ticker, side=Side.SELL, quantity=quantity)
+            status = self.broker.submit(order)
+            self.ledger.append("order", {
+                "decision_id": decision_id, "trade_date": trade_date, "ticker": ticker,
+                "client_order_id": order.client_order_id, "broker_order_id": status.broker_order_id,
+                "side": Side.SELL.value, "quantity": quantity, "status": status.status,
+                "duplicate": status.duplicate, "reason": f"take profit at {reached}",
+                "est_price": price, "filled_quantity": status.filled_quantity,
+                "filled_avg_price": status.filled_avg_price, "avg_entry_price": entry,
+            })
+            for i in hit:
+                book.record(ticker, i, gain_pct=levels[i][0], base_quantity=base, quantity=quantity,
+                            price=price, trade_date=trade_date, client_order_id=order.client_order_id)
+            notes.append(f"{summary}; sold {quantity:g} of {holding.quantity:g} at market -> {status.status}")
+            self.notifier.send(f"💰 TAKE PROFIT {ticker}: up {gain:+.1%} from {entry:,.2f}, "
+                               f"sold {quantity:g} of {holding.quantity:g} @ ~{price:,.2f} ({status.status})")
+        return notes
 
     # -- protective stops -----------------------------------------------------
 
@@ -322,7 +407,7 @@ def main(argv: list[str] | None = None) -> int:
         notifier=notify.from_env(),
     )
     notes = reconciler.refresh_orders() if not args.dry_run else []
-    notes += reconciler.sync_stops()
+    notes += reconciler.take_profits() + reconciler.sync_stops()
     print("\n".join(notes) if notes else "nothing to do: orders and stops match the broker")
     return 0
 

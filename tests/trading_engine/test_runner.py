@@ -267,9 +267,12 @@ def test_add_only_rating_tops_up_but_never_trims():
 
 def test_buy_on_a_position_that_has_grown_past_5pct_sells_nothing(env):
     broker, _, _ = env
-    make(env, stub({"AAPL": "Buy"})).run_cycle(["AAPL"], "2026-10-26")
+    from trading_engine.config import RiskLimits
+
+    no_tp = RiskLimits(take_profit_levels=())                    # this test is about sizing only
+    make(env, stub({"AAPL": "Buy"}), limits=no_tp).run_cycle(["AAPL"], "2026-10-26")
     broker.prices["AAPL"] = 140.0                                # 50 shares are now ~6.9%
-    report = make(env, stub({"AAPL": "Buy"})).run_cycle(["AAPL"], "2026-10-27")
+    report = make(env, stub({"AAPL": "Buy"}), limits=no_tp).run_cycle(["AAPL"], "2026-10-27")
     assert broker.positions["AAPL"] == 50 and report.outcomes[0].action == "none"
 
 

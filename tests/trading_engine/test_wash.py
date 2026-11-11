@@ -45,7 +45,8 @@ def env(tmp_path):
 def cycle(env, signal, n, policy="warn", **kw):
     broker, ledger, ks, inbox = env
     runner = Runner(broker, stub({"AAPL": signal}), ledger, sectors=SECTORS, kill_switch=ks, notifier=inbox,
-                    limits=RiskLimits(wash_sale_policy=policy), portfolio_builder=lambda a: None, **kw)
+                    limits=RiskLimits(wash_sale_policy=policy, take_profit_levels=()),
+                    portfolio_builder=lambda a: None, **kw)
     return runner.run_cycle(["AAPL"], day(n)).outcomes[0]
 
 

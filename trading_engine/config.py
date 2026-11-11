@@ -35,6 +35,13 @@ class RiskLimits:
     # the position was sized with. Off = stops only size the trade.
     enforce_stops: bool = True
 
+    # Take profit in steps: (gain over the average entry price, fraction of
+    # the position to sell). Each level is taken once per position; the
+    # fraction is of the shares held when the first level is reached, so two
+    # levels of 1/3 leave 1/3 running. () = no take-profit. Checked whenever
+    # the engine reconciles, not continuously at the broker.
+    take_profit_levels: tuple[tuple[float, float], ...] = ((0.015, 1 / 3), (0.025, 1 / 3))
+
     # Wash-sale detection (see wash.py): "warn" flags a possible wash sale in
     # the output, the ledger and the message; "block" also refuses the buy;
     # "off" does nothing. Sells are never blocked.

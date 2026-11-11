@@ -26,7 +26,7 @@ broker account ──► TradingAgents (analysts → debate → trader → PM) �
                  Alpaca paper order, idempotent client_order_id → ledger
                                                                          │
                                                                          ▼
-        reconcile: record fills → one resting GTC stop order per position
+   reconcile: record fills → take profit → one resting GTC stop per position
 ```
 
 Reconciliation also runs at the start of every cycle, before any analysis.
@@ -42,6 +42,24 @@ you first unless you turn it on:
 - `--dry-run` sends nothing.
 - The kill switch refuses every new order. Stops already resting at the broker
   stay there and can still trigger.
+
+## Take profit
+
+`take_profit_levels` in `config.py`, by default a third at +1.5% and a third at
++2.5% over the average entry price; the last third runs until a stop,
+Underweight or Sell.
+
+- Each level is taken once per position, and the fraction is of the shares held
+  when the first level is reached (50 shares: 16, then 16, 18 left).
+- A price that jumps past both levels sells both parts in one order.
+- The stop order is resized to what is left. The stop price is not moved.
+- After profit is taken, a Buy rating does not buy the sold shares back; the
+  levels start again once the position has been closed and re-entered.
+- It is a market sell made **when the engine reconciles**, not an order resting
+  at the broker. Between runs nothing watches the price, so a move that touches
+  a level and falls back is missed, and the fill can differ from the level.
+- Nothing is sold in a dry run, while the market is closed, or with the kill
+  switch on. `--confirm` asks first. `take_profit_levels=()` turns it off.
 
 ## Wash-sale detection
 
@@ -168,6 +186,7 @@ so a made-up dry-run account never feeds the real account's drawdown breaker.
 | No trading if the broker cannot be reconciled | `runner.Runner` |
 | Optional confirmation before each order (`--confirm`) | `runner.Runner` |
 | Possible wash sales flagged (or buys blocked) | `wash.WashSaleChecker` |
+| Take profit in steps (a third at +1.5%, a third at +2.5%) | `reconcile.Reconciler.take_profits` |
 | Tickers not in `universe.json` rejected (it is the list of what may be bought) | `risk.RiskEngine` + `universe.json` |
 | One order per ticker per day; `client_order_id` from date + ticker + side, and the broker is checked for an earlier attempt before analysis | `runner.Runner`, `risk.client_order_id` |
 | Decision logged before order; hash-chained ledger (catches damage and mid-file edits; not tamper-proof unless you save `ledger head` elsewhere) | `ledger.Ledger` |
