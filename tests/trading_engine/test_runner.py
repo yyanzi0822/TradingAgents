@@ -5,7 +5,7 @@ import pytest
 from trading_engine.broker import FakeBroker
 from trading_engine.killswitch import KillSwitch
 from trading_engine.ledger import Ledger
-from trading_engine.models import AccountSnapshot, OrderRequest, Side
+from trading_engine.models import AccountSnapshot, Holding, OrderRequest, Side
 from trading_engine.runner import Runner
 from trading_engine.sizing import intent_from_decision, target_weight_for
 
@@ -130,7 +130,7 @@ def test_sell_exits_position(env):
 def test_sizing_maps_ratings():
     acct = AccountSnapshot(equity=100_000, cash=90_000, holdings={})
     assert target_weight_for("Buy", "AAPL", acct) == 0.05
-    assert target_weight_for("Overweight", "AAPL", acct) == 0.03
+    assert target_weight_for("Overweight", "AAPL", acct) is None
     assert target_weight_for("Hold", "AAPL", acct) is None
     assert target_weight_for("Sell", "AAPL", acct) == 0.0
     assert target_weight_for("REVIEW", "AAPL", acct) is None
@@ -248,13 +248,22 @@ def test_downgrade_from_buy_to_overweight_keeps_the_position(env):
     assert report.outcomes[0].action == "none" and "hold" in report.outcomes[0].detail
 
 
-def test_overweight_still_buys_up_to_its_target(env):
-    broker, _, _ = env
-    make(env, stub({"AAPL": "Overweight"})).run_cycle(["AAPL"], "2026-10-26")
-    assert broker.positions["AAPL"] == 30                       # 3% from nothing
-    broker.positions["XOM"] = 20                                # 1% held ($1,000 at $50)
-    make(env, stub({"XOM": "Overweight"})).run_cycle(["XOM"], "2026-10-27")
-    assert broker.positions["XOM"] == 60                        # topped up to 3%
+def test_overweight_does_not_trade(env):
+    broker, ledger, _ = env
+    report = make(env, stub({"AAPL": "Overweight"})).run_cycle(["AAPL"], "2026-10-26")
+    assert not broker.orders and report.outcomes[0].action == "none"
+    assert ledger.records("decision")[0]["data"]["signal"] == "Overweight"   # still logged
+
+
+def test_add_only_rating_tops_up_but_never_trims():
+    from trading_engine.config import SizingPolicy
+
+    policy = SizingPolicy(add_only_ratings=("Buy",))
+    grown = AccountSnapshot(100_000, 93_000, {"AAPL": Holding("AAPL", 70, 7_000.0)})
+    small = AccountSnapshot(100_000, 99_000, {"AAPL": Holding("AAPL", 10, 1_000.0)})
+    assert target_weight_for("Buy", "AAPL", grown, policy) is None        # 7% held: keep
+    assert target_weight_for("Buy", "AAPL", small, policy) == 0.05       # 1% held: top up
+    assert target_weight_for("Buy", "AAPL", grown) == 0.05               # default: trim to 5%
 
 
 def test_underweight_and_sell_still_reduce(env):

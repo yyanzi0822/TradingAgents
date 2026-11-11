@@ -13,7 +13,7 @@ upstream updates can still be merged.
 ```
 broker account ──► TradingAgents (analysts → debate → trader → PM) ──► rating
                                                                          │
-                         sizing: Buy 5% · Overweight 3% (adds, never trims) · Hold keep ·    ▼
+                         sizing: Buy 5% · Overweight and Hold keep ·    ▼
                          Underweight halve · Sell exit · REVIEW never trades
                                                                          │
              ledger: decision written BEFORE any order  ◄────────────────┤
