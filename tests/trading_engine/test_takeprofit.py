@@ -126,12 +126,12 @@ def test_levels_start_again_after_the_position_is_closed(held):
     reconcile(held, "2026-10-29")
     assert TakeProfitBook(ledger).taken("AAPL") == set()
 
-    out = cycle(held, "Buy", "2026-10-30")                    # new position at 115, stop 109.25
+    out = cycle(held, "Buy", "2026-10-30")                    # new position at 115, trader's stop 95
     assert out.action == "submitted" and broker.positions["AAPL"] > 0
     shares = broker.positions["AAPL"]
-    broker.prices["AAPL"] = 131.0                             # below 3x the new risk (132.25)
+    broker.prices["AAPL"] = 174.0                             # below 3x the new risk (115 + 3 x 20)
     assert reconcile(held, "2026-11-02") == []
-    broker.prices["AAPL"] = 133.0
+    broker.prices["AAPL"] = 176.0
     reconcile(held, "2026-11-02")
     assert broker.positions["AAPL"] == shares - shares // 3
 
