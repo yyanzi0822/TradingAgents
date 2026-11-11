@@ -67,7 +67,7 @@ class SizingPolicy:
         "Sell": 0.0,
     })
     underweight_keep_fraction: float = 0.5
-    # Ratings that may add to a position but never sell it down, e.g.
-    # ("Buy",) to stop a Buy from trimming a position that has grown past
-    # its target. Empty = every target is moved to exactly.
-    add_only_ratings: tuple[str, ...] = ()
+    # Ratings that may add to a position but never sell it down. A Buy on a
+    # position that has grown past its target leaves it alone; only
+    # Underweight, Sell and a stop reduce a position.
+    add_only_ratings: tuple[str, ...] = ("Buy",)

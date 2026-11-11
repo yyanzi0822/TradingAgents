@@ -258,12 +258,19 @@ def test_overweight_does_not_trade(env):
 def test_add_only_rating_tops_up_but_never_trims():
     from trading_engine.config import SizingPolicy
 
-    policy = SizingPolicy(add_only_ratings=("Buy",))
     grown = AccountSnapshot(100_000, 93_000, {"AAPL": Holding("AAPL", 70, 7_000.0)})
     small = AccountSnapshot(100_000, 99_000, {"AAPL": Holding("AAPL", 10, 1_000.0)})
-    assert target_weight_for("Buy", "AAPL", grown, policy) is None        # 7% held: keep
-    assert target_weight_for("Buy", "AAPL", small, policy) == 0.05       # 1% held: top up
-    assert target_weight_for("Buy", "AAPL", grown) == 0.05               # default: trim to 5%
+    assert target_weight_for("Buy", "AAPL", grown) is None                # 7% held: keep
+    assert target_weight_for("Buy", "AAPL", small) == 0.05               # 1% held: top up
+    assert target_weight_for("Buy", "AAPL", grown, SizingPolicy(add_only_ratings=())) == 0.05
+
+
+def test_buy_on_a_position_that_has_grown_past_5pct_sells_nothing(env):
+    broker, _, _ = env
+    make(env, stub({"AAPL": "Buy"})).run_cycle(["AAPL"], "2026-10-26")
+    broker.prices["AAPL"] = 140.0                                # 50 shares are now ~6.9%
+    report = make(env, stub({"AAPL": "Buy"})).run_cycle(["AAPL"], "2026-10-27")
+    assert broker.positions["AAPL"] == 50 and report.outcomes[0].action == "none"
 
 
 def test_underweight_and_sell_still_reduce(env):
