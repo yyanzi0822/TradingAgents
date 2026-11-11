@@ -61,7 +61,7 @@ class SizingPolicy:
 
     targets: dict[str, float | None] = field(default_factory=lambda: {
         "Buy": 0.05,
-        "Overweight": 0.03,
+        "Overweight": 0.01,
         "Hold": None,
         "Underweight": None,   # handled as "halve the position" in sizing.py
         "Sell": 0.0,

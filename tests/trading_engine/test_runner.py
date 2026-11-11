@@ -130,7 +130,7 @@ def test_sell_exits_position(env):
 def test_sizing_maps_ratings():
     acct = AccountSnapshot(equity=100_000, cash=90_000, holdings={})
     assert target_weight_for("Buy", "AAPL", acct) == 0.05
-    assert target_weight_for("Overweight", "AAPL", acct) == 0.03
+    assert target_weight_for("Overweight", "AAPL", acct) == 0.01
     assert target_weight_for("Hold", "AAPL", acct) is None
     assert target_weight_for("Sell", "AAPL", acct) == 0.0
     assert target_weight_for("REVIEW", "AAPL", acct) is None
