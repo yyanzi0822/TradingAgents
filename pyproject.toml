@@ -41,6 +41,10 @@ dev = [
 bedrock = [
     "langchain-aws>=1.7.9",
 ]
+# Alpaca paper trading for the trading_engine package: pip install ".[alpaca]".
+alpaca = [
+    "alpaca-py>=0.40",
+]
 
 [project.scripts]
 tradingagents = "cli.main:app"
@@ -49,11 +53,12 @@ tradingagents = "cli.main:app"
 version = {attr = "tradingagents.__version__"}
 
 [tool.setuptools.packages.find]
-include = ["tradingagents*", "cli*"]
+include = ["tradingagents*", "cli*", "trading_engine*"]
 
 [tool.setuptools.package-data]
 cli = ["static/*"]
 tradingagents = ["assets/*.svg"]
+trading_engine = ["universe.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
