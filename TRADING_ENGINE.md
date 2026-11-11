@@ -43,6 +43,38 @@ you first unless you turn it on:
 - The kill switch refuses every new order. Stops already resting at the broker
   stay there and can still trigger.
 
+## Wash-sale detection
+
+A wash sale, in short: selling a stock at a loss and buying the same stock
+within 30 days before or after. The engine flags the two ways it can cause one:
+
+- **Buying back** a ticker it sold at a loss in the last 30 days (typically:
+  stopped out, then rated Buy again).
+- **Selling part** of a position at a loss within 30 days of buying it, while
+  keeping the rest.
+
+`wash_sale_policy` in `config.py` decides what happens:
+
+| Policy | Effect |
+|---|---|
+| `"warn"` (default) | The order is still sent. The warning is shown in the cycle output, in the `--confirm` prompt, in the Telegram message, and written to the ledger. |
+| `"block"` | Buys inside a window are refused. Sells are never blocked. |
+| `"off"` | No checks. |
+
+After a sale at a loss, the stop-out message and the daily summary say until
+what date a rebuy is a possible wash sale. `python -m trading_engine.wash`
+lists the tickers currently inside a window.
+
+It only knows this engine's ledger, so read every result as "possible":
+
+- trades in other accounts (another broker, an IRA, a spouse's account) count
+  under the rule and are not seen;
+- only the same ticker is matched, not options or near-identical funds;
+- a loss is judged against the average entry price, while brokers report per
+  tax lot.
+
+Paper trading has no tax effect. This is bookkeeping help, not tax advice.
+
 ## Messages on your phone (Telegram)
 
 One-time setup:
@@ -135,6 +167,7 @@ so a made-up dry-run account never feeds the real account's drawdown breaker.
 | Unfilled buys count against every cap; ticker with an open order skipped | `risk.RiskEngine`, `runner.Runner` |
 | No trading if the broker cannot be reconciled | `runner.Runner` |
 | Optional confirmation before each order (`--confirm`) | `runner.Runner` |
+| Possible wash sales flagged (or buys blocked) | `wash.WashSaleChecker` |
 | Tickers not in `universe.json` rejected (it is the list of what may be bought) | `risk.RiskEngine` + `universe.json` |
 | One order per ticker per day; `client_order_id` from date + ticker + side, and the broker is checked for an earlier attempt before analysis | `runner.Runner`, `risk.client_order_id` |
 | Decision logged before order; hash-chained ledger (catches damage and mid-file edits; not tamper-proof unless you save `ledger head` elsewhere) | `ledger.Ledger` |

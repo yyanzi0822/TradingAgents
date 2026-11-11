@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import date
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -44,6 +45,7 @@ from trading_engine.reconcile import Reconciler, _market_date
 from trading_engine.risk import RiskEngine, client_order_id
 from trading_engine.sizing import intent_from_decision
 from trading_engine.stops import StopBook
+from trading_engine.wash import WashSaleChecker
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +142,7 @@ class Runner:
         self.settle_seconds = settle_seconds
         self.confirm = confirm
         self.stops = StopBook(ledger)
+        self.wash = WashSaleChecker(ledger)
         # Dry runs send nothing, messages included.
         self.notifier = NullNotifier() if dry_run or notifier is None else notifier
         self.reconciler = Reconciler(broker, ledger, self.limits, self.kill_switch, stops=self.stops,
@@ -169,6 +172,19 @@ class Runner:
     def _already_traded(self, trade_date: str, ticker: str) -> bool:
         return any(r["data"].get("trade_date") == trade_date and r["data"].get("ticker") == ticker
                    for r in self.ledger.records("order"))
+
+    def _wash_check(self, order, ticker: str, trade_date: str, price: float,
+                    account: AccountSnapshot) -> str | None:
+        if self.limits.wash_sale_policy == "off":
+            return None
+        day = date.fromisoformat(trade_date)
+        if order.side is Side.BUY:
+            return self.wash.check_buy(ticker, day)
+        held = account.holdings.get(ticker)
+        if held is None:
+            return None
+        return self.wash.check_sell(ticker, day, price=price, cost_basis=held.avg_entry_price,
+                                    quantity=order.quantity, held=held.quantity)
 
     def _stopped_out(self, trade_date: str, ticker: str) -> bool:
         return any(r["data"].get("trade_date") == trade_date and r["data"].get("ticker") == ticker
@@ -309,6 +325,18 @@ class Runner:
                 summary = f"{o.side.value} {o.quantity:g} @ ~{quote.price:,.2f}"
                 if result.adjustments:
                     summary += f" ({'; '.join(result.adjustments)})"
+
+                wash = self._wash_check(o, ticker, trade_date, quote.price, account)
+                if wash:
+                    blocked = o.side is Side.BUY and self.limits.wash_sale_policy == "block"
+                    self.ledger.append("wash_sale", {
+                        "decision_id": decision_id, "trade_date": trade_date, "ticker": ticker,
+                        "side": o.side.value, "quantity": o.quantity, "detail": wash, "blocked": blocked,
+                    })
+                    if blocked:
+                        outcome.action, outcome.detail = "rejected", f"buy blocked: {wash}"
+                        continue
+                    summary += f" [{wash}]"
                 if self.dry_run:
                     outcome.action, outcome.detail = "dry-run", summary
                     continue
@@ -338,13 +366,18 @@ class Runner:
                     "client_order_id": o.client_order_id, "broker_order_id": status.broker_order_id,
                     "side": o.side.value, "quantity": o.quantity, "status": status.status,
                     "duplicate": status.duplicate,
+                    # For wash-sale detection: what it traded at, and what it cost.
+                    "est_price": quote.price, "filled_quantity": status.filled_quantity,
+                    "filled_avg_price": status.filled_avg_price,
+                    "avg_entry_price": getattr(account.holdings.get(ticker), "avg_entry_price", None),
                 })
                 outcome.action = "duplicate" if status.duplicate else "submitted"
                 outcome.detail = f"{summary} -> {status.status}"
                 if not status.duplicate:
                     stop_note = f", stop {result.stop_price:,.2f}" if o.side is Side.BUY and result.stop_price else ""
                     self.notifier.send(f"{o.side.value.upper()} {o.quantity:g} {ticker} @ ~{quote.price:,.2f}"
-                                       f"{stop_note}\nRating: {signal} · {status.status}")
+                                       f"{stop_note}\nRating: {signal} · {status.status}"
+                                       + (f"\n⚠️ {wash}" if wash else ""))
 
             except Exception as exc:  # noqa: BLE001 - one bad ticker must not kill the cycle
                 errors += 1

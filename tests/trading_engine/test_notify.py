@@ -62,7 +62,8 @@ def test_stop_hit_is_messaged_when_reconciliation_sees_it(env):
     inbox.messages.clear()
     broker.set_price("AAPL", 94.0)
     Reconciler(broker, ledger, kill_switch=ks, notifier=inbox).run()
-    assert inbox.messages == ["🛑 STOP HIT AAPL: sold 50 @ 94.00"]
+    assert len(inbox.messages) == 1
+    assert inbox.messages[0].startswith("🛑 STOP HIT AAPL: sold 50 @ 94.00\nsold at a loss; a rebuy before ")
 
 
 def test_errors_and_kill_switch_are_messaged(env):

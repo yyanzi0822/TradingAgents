@@ -35,6 +35,11 @@ class RiskLimits:
     # the position was sized with. Off = stops only size the trade.
     enforce_stops: bool = True
 
+    # Wash-sale detection (see wash.py): "warn" flags a possible wash sale in
+    # the output, the ledger and the message; "block" also refuses the buy;
+    # "off" does nothing. Sells are never blocked.
+    wash_sale_policy: str = "warn"
+
     # Reject decisions made on prices older than this.
     max_quote_age_seconds: int = 15 * 60
 

@@ -9,6 +9,7 @@ package decides *whether it is allowed* and *how it is executed*:
 - ``ledger``    append-only, hash-chained log of every decision and order
 - ``killswitch`` file-based emergency stop
 - ``stops``     stop price per position; can be raised, never lowered
+- ``wash``      wash-sale detection from the ledger
 - ``notify``    Telegram messages for orders, stop-outs and errors
 - ``summary``   end-of-day summary
 - ``reconcile`` records fills and keeps one resting stop order per position

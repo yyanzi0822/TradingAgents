@@ -37,6 +37,7 @@ from trading_engine.models import TERMINAL_STATUSES, OrderRequest, Side
 from trading_engine.notify import Notifier, NullNotifier
 from trading_engine.risk import client_order_id
 from trading_engine.stops import StopBook
+from trading_engine.wash import WashSaleChecker
 
 MARKET_TZ = ZoneInfo("America/New_York")
 _TRACKED_KINDS = ("order", "stop_order", "order_update")
@@ -109,14 +110,26 @@ class Reconciler:
             if status.status in TERMINAL_STATUSES and status.status != "filled" and known["role"] == "order":
                 self.notifier.send(f"⚠️ {notes[-1]}")          # expired, cancelled or rejected
             if known["role"] == "stop" and status.status == "filled":
-                self.notifier.send(f"🛑 STOP HIT {status.ticker}: sold {status.filled_quantity:g}"
-                                   + (f" @ {status.filled_avg_price:,.2f}" if status.filled_avg_price else ""))
                 self.ledger.append("stop_filled", {
                     "ticker": status.ticker, "trade_date": _market_date(status.filled_at),
                     "quantity": status.filled_quantity, "price": status.filled_avg_price,
                     "client_order_id": oid,
                 })
+                window = self._wash_window_note(status.ticker)
+                if window:
+                    notes.append(f"{status.ticker}: {window}")
+                self.notifier.send(f"🛑 STOP HIT {status.ticker}: sold {status.filled_quantity:g}"
+                                   + (f" @ {status.filled_avg_price:,.2f}" if status.filled_avg_price else "")
+                                   + (f"\n{window}" if window else ""))
         return notes
+
+    def _wash_window_note(self, ticker: str) -> str | None:
+        """After a sale at a loss: until when a rebuy is a possible wash sale."""
+        if self.limits.wash_sale_policy == "off":
+            return None
+        today = datetime.fromisoformat(_market_date(None)).date()
+        window = WashSaleChecker(self.ledger).windows(today).get(ticker)
+        return f"sold at a loss; a rebuy before {window[1]} is a possible wash sale" if window else None
 
     @staticmethod
     def _describe(status: OrderStatus, role: str) -> str:
@@ -210,7 +223,7 @@ class Reconciler:
             if quote.price <= stop:
                 if market_open is None:
                     market_open = self.broker.is_market_open()
-                notes.append(self._exit_breached(ticker, holding.quantity, stop, quote.price,
+                notes.append(self._exit_breached(ticker, holding, stop, quote.price,
                                                  existing, trade_date, market_open))
                 continue
 
@@ -223,10 +236,10 @@ class Reconciler:
                 continue
             notes.append(f"{ticker}: {'would place' if self.dry_run else 'placed'} stop {want_qty:g} @ {stop:,.2f}")
             if not self.dry_run:
-                self._place_stop(ticker, want_qty, stop)
+                self._place_stop(ticker, want_qty, stop, holding.avg_entry_price)
         return notes
 
-    def _place_stop(self, ticker: str, quantity: float, stop: float) -> None:
+    def _place_stop(self, ticker: str, quantity: float, stop: float, avg_entry_price: float | None = None) -> None:
         # Alpaca never accepts a client_order_id twice, even for a cancelled
         # order, so the id carries a counter taken from the ledger.
         nonce = len(self.ledger.records("stop_order"))
@@ -239,12 +252,13 @@ class Reconciler:
         self.ledger.append("stop_order", {
             "client_order_id": order.client_order_id, "broker_order_id": status.broker_order_id,
             "ticker": ticker, "side": Side.SELL.value, "quantity": quantity, "stop_price": stop,
-            "status": status.status,
+            "status": status.status, "avg_entry_price": avg_entry_price,
         })
 
-    def _exit_breached(self, ticker: str, quantity: float, stop: float, price: float,
+    def _exit_breached(self, ticker: str, holding, stop: float, price: float,
                        existing: list[OrderStatus], trade_date: str, market_open: bool) -> str:
         """The price is already at or below the stop: sell the position at market."""
+        quantity = holding.quantity
         summary = f"{ticker}: price {price:,.2f} is through stop {stop:,.2f}"
         if self.dry_run:
             return f"{summary}; would sell {quantity:g} at market"
@@ -265,6 +279,8 @@ class Reconciler:
             "client_order_id": order.client_order_id, "broker_order_id": status.broker_order_id,
             "side": Side.SELL.value, "quantity": quantity, "status": status.status,
             "duplicate": status.duplicate, "reason": f"price {price} through stop {stop}",
+            "est_price": price, "filled_quantity": status.filled_quantity,
+            "filled_avg_price": status.filled_avg_price, "avg_entry_price": holding.avg_entry_price,
         })
         self.ledger.append("stop_filled", {"ticker": ticker, "trade_date": trade_date, "quantity": quantity,
                                            "price": price, "client_order_id": order.client_order_id})

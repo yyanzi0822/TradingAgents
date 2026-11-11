@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from trading_engine.broker import Broker
 from trading_engine.config import RiskLimits
@@ -14,6 +14,7 @@ from trading_engine.killswitch import KillSwitch
 from trading_engine.ledger import Ledger
 from trading_engine.reconcile import Reconciler, _market_date
 from trading_engine.stops import StopBook
+from trading_engine.wash import WashSaleChecker
 
 
 def build_summary(broker: Broker, ledger: Ledger, kill_switch: KillSwitch,
@@ -58,6 +59,13 @@ def build_summary(broker: Broker, ledger: Ledger, kill_switch: KillSwitch,
         lines.append(f"  stopped out {s['ticker']} {s['quantity']:g}{price}")
     for e in errors:
         lines.append(f"  error {e.get('ticker') or ''}: {str(e.get('error'))[:120]}")
+
+    if limits.wash_sale_policy != "off":
+        windows = WashSaleChecker(ledger).windows(date.fromisoformat(day))
+        if windows:
+            lines.append("Wash-sale windows (rebuy before the date is a possible wash sale):")
+            lines.extend(f"  {t}: sold at a loss {sold}, clear from {clear}"
+                         for t, (sold, clear) in sorted(windows.items()))
 
     lines.append(f"Kill switch: ON — {kill_switch.reason()}" if kill_switch.active() else "Kill switch: off")
     return "\n".join(lines)
