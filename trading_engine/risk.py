@@ -11,7 +11,7 @@ Order of checks:
 3. no target              -> no order (Hold / unreadable decision)
 4. sells                  -> always allowed (they reduce risk); never short
 5. drawdown breaker       -> reject new buys
-6. buys are capped by the smallest of: single-stock cap (if one is set), sector headroom,
+6. buys are capped by the smallest of: single-stock cap and sector headroom (when set),
    gross-exposure headroom, available cash, and risk-per-trade sizing
 """
 
@@ -138,7 +138,8 @@ class RiskEngine:
         if sector == UNKNOWN_SECTOR:
             reasons.append(f"{ticker} has no sector mapping; add it to the universe file")
             return RiskResult(False, None, reasons)
-        caps["sector cap"] = (lim.max_sector_weight - self.sector_weight(account, sector)) * account.equity
+        if lim.max_sector_weight is not None:
+            caps["sector cap"] = (lim.max_sector_weight - self.sector_weight(account, sector)) * account.equity
 
         pending = account.pending_buy_value
         caps["gross exposure cap"] = lim.max_gross_exposure * account.equity - account.gross_exposure - pending

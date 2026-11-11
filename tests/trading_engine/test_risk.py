@@ -77,14 +77,22 @@ def test_risk_per_trade_still_limits_a_default_stop_position():
     assert any("risk per trade" in a for a in r.adjustments)
 
 
-def test_sector_cap_is_below_the_stock_cap_so_it_binds_first():
-    r = engine().evaluate(intent(weight=0.30, stop=99.0), account(), quote(), now=NOW)
-    assert r.order.quantity == 200 and any("sector cap" in a for a in r.adjustments)
+def test_no_sector_cap_by_default():
+    # $19,500 of tech already held: a 20% sector cap would leave $500 of room.
+    held = {"MSFT": Holding("MSFT", 100, 10_000.0), "NVDA": Holding("NVDA", 95, 9_500.0)}
+    r = engine().evaluate(intent(stop=99.0), account(cash=80_500, holdings=held), quote(), now=NOW)
+    assert r.order.quantity == 50 and not r.adjustments
+
+
+def test_ticker_outside_the_universe_is_still_rejected_without_a_sector_cap():
+    r = engine().evaluate(intent(ticker="ZZZZ"), account(), quote("ZZZZ"), now=NOW)
+    assert not r.approved and "universe file" in r.reasons[0]
 
 
 def test_sector_cap():
     held = {"MSFT": Holding("MSFT", 100, 10_000.0), "NVDA": Holding("NVDA", 95, 9_500.0)}
-    r = engine().evaluate(intent(stop=99.0), account(cash=80_500, holdings=held), quote(), now=NOW)
+    r = engine(max_sector_weight=0.20).evaluate(
+        intent(stop=99.0), account(cash=80_500, holdings=held), quote(), now=NOW)
     # 20% sector = $20,000; $19,500 used -> $500 room -> 5 shares.
     assert r.order.quantity == 5
     assert any("sector cap" in a for a in r.adjustments)

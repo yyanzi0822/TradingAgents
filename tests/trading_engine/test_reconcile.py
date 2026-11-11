@@ -253,7 +253,7 @@ def test_unfilled_buys_count_against_sector_gross_and_cash_caps(env):
     report = runner(env, stub({"AAPL": "Buy", "MSFT": "Buy"})).run_cycle(["AAPL", "MSFT"], "2026-10-27")
     assert [o.action for o in report.outcomes] == ["submitted", "submitted"]
 
-    engine = RiskEngine(RiskLimits(), SECTORS)
+    engine = RiskEngine(RiskLimits(max_sector_weight=0.20), SECTORS)
     acct = AccountSnapshot(equity=100_000, cash=100_000, pending_buys={"AAPL": 5_000, "NVDA": 14_500})
     engine.sectors["NVDA"] = "Information Technology"
     from datetime import UTC, datetime

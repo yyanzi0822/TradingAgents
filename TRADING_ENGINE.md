@@ -19,7 +19,7 @@ broker account ──► TradingAgents (analysts → debate → trader → PM) �
              ledger: decision written BEFORE any order  ◄────────────────┤
                                                                          ▼
           risk engine (no LLM): kill switch → stale quote → long-only →
-          drawdown breaker → min(30% stock, 20% sector, 80% gross, cash,
+          drawdown breaker → min(30% stock, 80% gross, cash,
           0.5% risk-per-trade from the trader's stop or an 8% default)
                                                                          │
                                                                          ▼
@@ -128,14 +128,14 @@ so a made-up dry-run account never feeds the real account's drawdown breaker.
 | Rail | Where |
 |---|---|
 | Live trading refused (non-paper URL or account number) | `broker.AlpacaPaperBroker` |
-| 30% stock / 20% sector / 80% gross / 0.5% risk per trade. The stock cap is a ceiling: with a 5% Buy target and a 20% sector cap it does not bind until those are raised too | `risk.RiskEngine` |
+| 30% stock / 80% gross / 0.5% risk per trade; no sector cap by default (set `max_sector_weight` to add one). The stock cap is a ceiling: with a 5% Buy target it does not bind until the target is raised | `risk.RiskEngine` |
 | 8% drawdown breaker halts buys (sells still allowed) | `risk.RiskEngine` + ledger high-water mark |
 | Stale (>15 min) or invalid quotes rejected | `risk.RiskEngine` |
 | Resting GTC stop order per position; stop only moves up | `reconcile.Reconciler`, `stops.StopBook` |
 | Unfilled buys count against every cap; ticker with an open order skipped | `risk.RiskEngine`, `runner.Runner` |
 | No trading if the broker cannot be reconciled | `runner.Runner` |
 | Optional confirmation before each order (`--confirm`) | `runner.Runner` |
-| Unknown-sector tickers rejected | `risk.RiskEngine` + `universe.json` |
+| Tickers not in `universe.json` rejected (it is the list of what may be bought) | `risk.RiskEngine` + `universe.json` |
 | One order per ticker per day; `client_order_id` from date + ticker + side, and the broker is checked for an earlier attempt before analysis | `runner.Runner`, `risk.client_order_id` |
 | Decision logged before order; hash-chained ledger (catches damage and mid-file edits; not tamper-proof unless you save `ledger head` elsewhere) | `ledger.Ledger` |
 | Damaged ledger or 3 errors in a cycle → kill switch | `runner.Runner` |
