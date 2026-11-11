@@ -24,7 +24,7 @@ class RiskLimits:
     max_gross_exposure: float = 0.80       # total invested
 
     # Planned loss if the stop is hit, as a fraction of equity.
-    risk_per_trade: float = 0.005
+    risk_per_trade: float = 0.03
     # Stop distance assumed when the agents give no stop loss.
     default_stop_pct: float = 0.08
 

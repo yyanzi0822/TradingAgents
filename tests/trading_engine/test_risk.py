@@ -36,7 +36,7 @@ def test_default_stop_8pct_leaves_the_5pct_target_binding():
 
 def test_buy_capped_by_risk_per_trade_with_wide_stop():
     # 0.5% of 100k = $500 risk; $25 stop distance -> 20 shares ($2,000 < the 5% target).
-    r = engine().evaluate(intent(stop=75.0), account(), quote(), now=NOW)
+    r = engine(risk_per_trade=0.005).evaluate(intent(stop=75.0), account(), quote(), now=NOW)
     assert r.order.quantity == 20
     assert any("risk per trade" in a for a in r.adjustments)
 
@@ -72,9 +72,18 @@ def test_cap_can_be_turned_off():
 
 def test_risk_per_trade_still_limits_a_default_stop_position():
     # 8% default stop: $500 risk / $8 per share = 62 shares, 6.2% of equity, whatever the target.
-    r = engine().evaluate(intent(weight=0.15), account(), quote(), now=NOW)
+    r = engine(risk_per_trade=0.005).evaluate(intent(weight=0.15), account(), quote(), now=NOW)
     assert r.order.quantity == 62
     assert any("risk per trade" in a for a in r.adjustments)
+
+
+def test_default_risk_per_trade_is_3pct():
+    # 3% of 100k = $3,000 risk; $40 stop distance -> 75 shares ($7,500) for a 10% target.
+    r = engine().evaluate(intent(weight=0.10, stop=60.0), account(), quote(), now=NOW)
+    assert r.order.quantity == 75 and any("risk per trade" in a for a in r.adjustments)
+    # With the 8% default stop it allows 37.5% of equity, so the 30% stock cap binds first.
+    r = engine().evaluate(intent(weight=0.50), account(), quote(), now=NOW)
+    assert r.order.quantity == 300 and any("single-stock cap" in a for a in r.adjustments)
 
 
 def test_no_sector_cap_by_default():
@@ -161,7 +170,7 @@ def test_unknown_sector_rejected():
 
 
 def test_stop_above_price_ignored():
-    r = engine(default_stop_pct=0.25).evaluate(intent(stop=150.0), account(), quote(), now=NOW)
+    r = engine(default_stop_pct=0.25, risk_per_trade=0.005).evaluate(intent(stop=150.0), account(), quote(), now=NOW)
     assert r.order.quantity == 20  # sized off the 25% default stop, not the bogus one
     assert any("ignored stop" in a for a in r.adjustments)
 
