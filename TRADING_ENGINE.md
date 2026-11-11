@@ -20,7 +20,7 @@ broker account ──► TradingAgents (analysts → debate → trader → PM) �
                                                                          ▼
           risk engine (no LLM): kill switch → stale quote → long-only →
           drawdown breaker → min(30% stock, 80% gross, cash,
-          0.5% risk-per-trade from the trader's stop or an 8% default)
+          0.5% risk-per-trade from a fixed 5% stop)
                                                                          │
                                                                          ▼
                  Alpaca paper order, idempotent client_order_id → ledger
@@ -112,8 +112,9 @@ cycle. Treat the bot token like a password: anyone holding it can post as your b
 ## Stops and reconciliation
 
 - **Where the stop comes from.** The price a buy was sized with: the trader's
-  stop loss, or 8% below the price when it gives none. A position with no
-  recorded stop gets 8% below its average entry price.
+  stop loss when `use_trader_stop` is on; by default it is ignored and every
+  stop is 5% below the buy price (`default_stop_pct`). A position with no
+  recorded stop gets 5% below its average entry price.
 - **Only up.** While a position is open its stop can be raised, never lowered,
   so a later decision from the agents cannot loosen it.
 - **Kept in step.** Each run checks that every position has exactly one stop

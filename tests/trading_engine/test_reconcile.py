@@ -121,8 +121,8 @@ def test_existing_position_without_a_recorded_stop_gets_the_default(env):
     broker, ledger, _ = env
     broker.positions["JPM"], broker.entry_prices["JPM"] = 10, 200.0
     reconciler(env).run()
-    assert stops_at(broker, "JPM") == [(10.0, 184.0)]      # 8% below entry
-    assert StopBook(ledger).current() == {"JPM": 184.0}
+    assert stops_at(broker, "JPM") == [(10.0, 190.0)]      # 5% below entry
+    assert StopBook(ledger).current() == {"JPM": 190.0}
 
 
 def test_position_with_no_entry_price_is_reported_not_guessed(env):
@@ -139,7 +139,7 @@ def test_position_with_no_entry_price_is_reported_not_guessed(env):
 def breached(env):
     broker, _, _ = env
     broker.positions["JPM"], broker.entry_prices["JPM"] = 10, 200.0
-    broker.prices["JPM"] = 180.0                           # default stop is 184
+    broker.prices["JPM"] = 180.0                           # default stop is 190
 
 
 def test_price_through_the_stop_sells_at_market(env):
@@ -147,7 +147,7 @@ def test_price_through_the_stop_sells_at_market(env):
     breached(env)
     notes = reconciler(env).run(TODAY)
     assert broker.positions["JPM"] == 0
-    assert "through stop 184.00; sold 10 at market" in notes[0]
+    assert "through stop 190.00; sold 10 at market" in notes[0]
     assert ledger.records("order")[0]["data"]["decision_id"].endswith("|stop-exit")
     assert reconciler(env).run(TODAY) == [] or broker.positions["JPM"] == 0
 
@@ -185,7 +185,7 @@ def test_dry_run_reports_and_sends_nothing(env):
     broker, ledger, _ = env
     broker.positions["JPM"], broker.entry_prices["JPM"] = 10, 200.0
     notes = reconciler(env, dry_run=True).run()
-    assert notes == ["JPM: would place stop 10 @ 184.00"]
+    assert notes == ["JPM: would place stop 10 @ 190.00"]
     assert not broker.orders and not ledger.records("stop") and not ledger.records("stop_order")
 
 

@@ -12,7 +12,8 @@ SECTORS = {"AAPL": "Information Technology", "MSFT": "Information Technology",
 
 
 def engine(**overrides):
-    return RiskEngine(RiskLimits(**overrides), SECTORS)
+    """Engine with the trader's stop honoured and an 8% fallback, unless overridden."""
+    return RiskEngine(RiskLimits(**{"use_trader_stop": True, "default_stop_pct": 0.08, **overrides}), SECTORS)
 
 
 def account(equity=100_000.0, cash=100_000.0, holdings=None, hwm=None):
@@ -172,3 +173,19 @@ def test_client_order_id_is_deterministic():
     assert a != client_order_id("d2", "AAPL", Side.BUY)
     assert a != client_order_id("d1", "AAPL", Side.SELL)
     assert len(a) <= 48  # Alpaca's client_order_id limit
+
+
+def test_default_stop_is_a_fixed_5pct_below_the_buy_price():
+    r = RiskEngine(RiskLimits(), SECTORS).evaluate(intent(weight=0.20), account(), quote(), now=NOW)
+    assert r.stop_price == 95.0
+    # $500 risk / $5 per share = 100 shares: 10% of equity is the most one stop can carry.
+    assert r.order.quantity == 100 and any("risk per trade" in a for a in r.adjustments)
+
+
+def test_trader_stop_is_ignored_unless_turned_on():
+    default = RiskEngine(RiskLimits(), SECTORS)
+    assert default.evaluate(intent(stop=80.0), account(), quote(), now=NOW).stop_price == 95.0
+    assert default.evaluate(intent(stop=99.0), account(), quote(), now=NOW).stop_price == 95.0
+    on = RiskEngine(RiskLimits(use_trader_stop=True), SECTORS)
+    assert on.evaluate(intent(stop=80.0), account(), quote(), now=NOW).stop_price == 80.0
+    assert on.evaluate(intent(), account(), quote(), now=NOW).stop_price == 95.0     # none given: 5%

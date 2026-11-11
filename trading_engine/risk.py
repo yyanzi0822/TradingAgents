@@ -145,7 +145,7 @@ class RiskEngine:
         caps["gross exposure cap"] = lim.max_gross_exposure * account.equity - account.gross_exposure - pending
         caps["available cash"] = account.cash - pending
 
-        stop = intent.stop_loss
+        stop = intent.stop_loss if lim.use_trader_stop else None
         if stop is None or not (0 < stop < quote.price):
             if stop is not None:
                 adjustments.append(f"ignored stop {stop} (not below price); used default stop")

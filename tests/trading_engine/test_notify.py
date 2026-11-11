@@ -129,7 +129,7 @@ def test_daily_summary_lists_positions_stops_and_todays_activity(env):
     broker, ledger, ks, _ = env
     broker.positions["JPM"], broker.entry_prices["JPM"], broker.cash = 10, 200.0, 98_000.0
     runner(env, stub({"AAPL": "Buy"})).run_cycle(["AAPL"], TODAY)
-    broker.set_price("JPM", 180.0)                    # JPM's default stop (184) triggers
+    broker.set_price("JPM", 180.0)                    # JPM's default stop (190) triggers
     Reconciler(broker, ledger, kill_switch=ks).run()
 
     text = build_summary(broker, ledger, ks, day=TODAY)
