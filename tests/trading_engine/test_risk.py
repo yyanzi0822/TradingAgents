@@ -175,17 +175,18 @@ def test_client_order_id_is_deterministic():
     assert len(a) <= 48  # Alpaca's client_order_id limit
 
 
-def test_default_stop_is_a_fixed_5pct_below_the_buy_price():
+def test_stop_is_5pct_below_the_buy_price_when_the_trader_gives_none():
     r = RiskEngine(RiskLimits(), SECTORS).evaluate(intent(weight=0.20), account(), quote(), now=NOW)
     assert r.stop_price == 95.0
     # $500 risk / $5 per share = 100 shares: 10% of equity is the most one stop can carry.
     assert r.order.quantity == 100 and any("risk per trade" in a for a in r.adjustments)
 
 
-def test_trader_stop_is_ignored_unless_turned_on():
+def test_trader_stop_is_used_by_default_and_can_be_turned_off():
     default = RiskEngine(RiskLimits(), SECTORS)
-    assert default.evaluate(intent(stop=80.0), account(), quote(), now=NOW).stop_price == 95.0
-    assert default.evaluate(intent(stop=99.0), account(), quote(), now=NOW).stop_price == 95.0
-    on = RiskEngine(RiskLimits(use_trader_stop=True), SECTORS)
-    assert on.evaluate(intent(stop=80.0), account(), quote(), now=NOW).stop_price == 80.0
-    assert on.evaluate(intent(), account(), quote(), now=NOW).stop_price == 95.0     # none given: 5%
+    assert default.evaluate(intent(stop=80.0), account(), quote(), now=NOW).stop_price == 80.0
+    assert default.evaluate(intent(), account(), quote(), now=NOW).stop_price == 95.0     # none given: 5%
+    assert default.evaluate(intent(stop=120.0), account(), quote(), now=NOW).stop_price == 95.0  # above price
+    fixed = RiskEngine(RiskLimits(use_trader_stop=False), SECTORS)
+    assert fixed.evaluate(intent(stop=80.0), account(), quote(), now=NOW).stop_price == 95.0
+    assert fixed.evaluate(intent(stop=99.0), account(), quote(), now=NOW).stop_price == 95.0

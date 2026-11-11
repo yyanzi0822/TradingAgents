@@ -25,11 +25,12 @@ class RiskLimits:
 
     # Planned loss if the stop is hit, as a fraction of equity.
     risk_per_trade: float = 0.005
-    # Every position's stop is this far below the price it was bought at.
+    # Stop distance below the buy price when the trader agent gives no usable stop.
     default_stop_pct: float = 0.05
-    # False = always use default_stop_pct. True = use the stop loss the trader
-    # agent proposes when it gives a valid one, and default_stop_pct otherwise.
-    use_trader_stop: bool = False
+    # True = use the stop loss the trader agent proposes when it gives a valid
+    # one (below the price), and default_stop_pct otherwise. False = always use
+    # default_stop_pct.
+    use_trader_stop: bool = True
 
     # Halt new buys once equity is this far below its high-water mark.
     max_drawdown: float = 0.08

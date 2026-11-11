@@ -20,7 +20,7 @@ broker account ──► TradingAgents (analysts → debate → trader → PM) �
                                                                          ▼
           risk engine (no LLM): kill switch → stale quote → long-only →
           drawdown breaker → min(30% stock, 80% gross, cash,
-          0.5% risk-per-trade from a fixed 5% stop)
+          0.5% risk-per-trade from the trader's stop or a 5% default)
                                                                          │
                                                                          ▼
                  Alpaca paper order, idempotent client_order_id → ledger
@@ -50,8 +50,9 @@ you first unless you turn it on:
 stop, Underweight or Sell.
 
 - The risk is the distance from the entry price to the stop the position
-  started with. With the default 5% stop: bought at 100, stop 95, so 3x is 115
-  (+15%) and 5x is 125 (+25%). Raising the stop later does not move the targets.
+  started with, so the targets follow each trade's own stop. Bought at 100 with
+  a stop at 95: 3x is 115 (+15%) and 5x is 125 (+25%). With a stop at 90 they
+  are 130 and 150. Raising the stop later does not move the targets.
 - Each level is taken once per position, and the fraction is of the shares held
   when the first level is reached (50 shares: 16, then 16, 18 left).
 - A price that jumps past both levels sells both parts in one order.
@@ -115,9 +116,10 @@ cycle. Treat the bot token like a password: anyone holding it can post as your b
 ## Stops and reconciliation
 
 - **Where the stop comes from.** The price a buy was sized with: the trader's
-  stop loss when `use_trader_stop` is on; by default it is ignored and every
-  stop is 5% below the buy price (`default_stop_pct`). A position with no
-  recorded stop gets 5% below its average entry price.
+  stop loss when it gives a valid one, otherwise 5% below the buy price
+  (`default_stop_pct`). Set `use_trader_stop = False` to use 5% for every
+  position. A position with no recorded stop gets 5% below its average entry
+  price.
 - **Only up.** While a position is open its stop can be raised, never lowered,
   so a later decision from the agents cannot loosen it.
 - **Kept in step.** Each run checks that every position has exactly one stop
