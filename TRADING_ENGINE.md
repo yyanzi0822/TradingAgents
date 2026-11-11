@@ -45,10 +45,13 @@ you first unless you turn it on:
 
 ## Take profit
 
-`take_profit_levels` in `config.py`, by default a third at +1.5% and a third at
-+2.5% over the average entry price; the last third runs until a stop,
-Underweight or Sell.
+`take_profit_levels` in `config.py`: by default sell a third when the gain is
+3x the position's risk and another third at 5x; the last third runs until a
+stop, Underweight or Sell.
 
+- The risk is the distance from the entry price to the stop the position
+  started with. With the default 5% stop: bought at 100, stop 95, so 3x is 115
+  (+15%) and 5x is 125 (+25%). Raising the stop later does not move the targets.
 - Each level is taken once per position, and the fraction is of the shares held
   when the first level is reached (50 shares: 16, then 16, 18 left).
 - A price that jumps past both levels sells both parts in one order.
@@ -187,7 +190,7 @@ so a made-up dry-run account never feeds the real account's drawdown breaker.
 | No trading if the broker cannot be reconciled | `runner.Runner` |
 | Optional confirmation before each order (`--confirm`) | `runner.Runner` |
 | Possible wash sales flagged (or buys blocked) | `wash.WashSaleChecker` |
-| Take profit in steps (a third at +1.5%, a third at +2.5%) | `reconcile.Reconciler.take_profits` |
+| Take profit in steps (a third at 3x the risk, a third at 5x) | `reconcile.Reconciler.take_profits` |
 | Tickers not in `universe.json` rejected (it is the list of what may be bought) | `risk.RiskEngine` + `universe.json` |
 | One order per ticker per day; `client_order_id` from date + ticker + side, and the broker is checked for an earlier attempt before analysis | `runner.Runner`, `risk.client_order_id` |
 | Decision logged before order; hash-chained ledger (catches damage and mid-file edits; not tamper-proof unless you save `ledger head` elsewhere) | `ledger.Ledger` |

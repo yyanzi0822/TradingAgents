@@ -148,7 +148,7 @@ class Reconciler:
     # -- take profit ----------------------------------------------------------
 
     def take_profits(self, trade_date: str | None = None) -> list[str]:
-        """Sell part of a position once it is up by a configured amount."""
+        """Sell part of a position once it is up by a multiple of what it risked."""
         levels = self.limits.take_profit_levels
         if not levels:
             return []
@@ -157,6 +157,7 @@ class Reconciler:
         account = self.broker.get_account()
         held = {t: h for t, h in account.holdings.items() if h.quantity > 0}
         state = book.state()
+        first_stops = self.stops.initial()
         if not self.dry_run:
             for ticker in state:
                 if ticker not in held:
@@ -173,12 +174,15 @@ class Reconciler:
             waiting = [i for i in range(len(levels)) if i not in done]
             if not entry or not waiting:
                 continue
+            # Risk per share: entry to the stop the position started with.
+            first_stop = first_stops.get(ticker)
+            risk = entry - first_stop if first_stop and first_stop < entry else entry * self.limits.default_stop_pct
             # The broker's own valuation is enough to rule most positions out.
-            if holding.market_value / holding.quantity < entry * (1 + min(levels[i][0] for i in waiting)) - 1e-9:
+            if holding.market_value / holding.quantity < entry + min(levels[i][0] for i in waiting) * risk - 1e-9:
                 continue
             price = self.broker.get_quote(ticker).price
             gain = price / entry - 1
-            hit = [i for i in waiting if price >= entry * (1 + levels[i][0]) - 1e-9]
+            hit = [i for i in waiting if price >= entry + levels[i][0] * risk - 1e-9]
             if not hit:
                 continue
             if open_orders is None:
@@ -189,7 +193,7 @@ class Reconciler:
 
             base = state.get(ticker, {}).get("base", holding.quantity)
             quantity = min(sum(float(math.floor(base * levels[i][1])) for i in hit), holding.quantity)
-            reached = " and ".join(f"+{levels[i][0]:.1%}" for i in hit)
+            reached = " and ".join(f"{levels[i][0]:g}x" for i in hit) + " risk"
             summary = f"{ticker}: up {gain:+.1%} (take-profit at {reached})"
             if quantity < 1:
                 notes.append(f"{summary}; position too small to sell a part of")
@@ -222,10 +226,11 @@ class Reconciler:
                 "filled_avg_price": status.filled_avg_price, "avg_entry_price": entry,
             })
             for i in hit:
-                book.record(ticker, i, gain_pct=levels[i][0], base_quantity=base, quantity=quantity,
+                book.record(ticker, i, risk_multiple=levels[i][0], risk_per_share=round(risk, 4),
+                            base_quantity=base, quantity=quantity,
                             price=price, trade_date=trade_date, client_order_id=order.client_order_id)
             notes.append(f"{summary}; sold {quantity:g} of {holding.quantity:g} at market -> {status.status}")
-            self.notifier.send(f"💰 TAKE PROFIT {ticker}: up {gain:+.1%} from {entry:,.2f}, "
+            self.notifier.send(f"💰 TAKE PROFIT {ticker}: up {gain:+.1%} from {entry:,.2f} ({reached}), "
                                f"sold {quantity:g} of {holding.quantity:g} @ ~{price:,.2f} ({status.status})")
         return notes
 

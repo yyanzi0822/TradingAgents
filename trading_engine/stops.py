@@ -26,6 +26,17 @@ class StopBook:
                 stops[ticker] = float(price)
         return stops
 
+    def initial(self) -> dict[str, float]:
+        """Ticker -> the stop each open position started with (before any raise)."""
+        first: dict[str, float] = {}
+        for rec in self.ledger.records("stop"):
+            ticker, price = rec["data"]["ticker"], rec["data"]["stop_price"]
+            if price is None:
+                first.pop(ticker, None)
+            else:
+                first.setdefault(ticker, float(price))
+        return first
+
     def set(self, ticker: str, stop_price: float, *, source: str, decision_id: str | None = None) -> float:
         """Record a stop. Returns the stop now in force (the higher of old and new)."""
         ticker = ticker.upper()

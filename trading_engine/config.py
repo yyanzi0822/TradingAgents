@@ -38,12 +38,14 @@ class RiskLimits:
     # the position was sized with. Off = stops only size the trade.
     enforce_stops: bool = True
 
-    # Take profit in steps: (gain over the average entry price, fraction of
-    # the position to sell). Each level is taken once per position; the
-    # fraction is of the shares held when the first level is reached, so two
-    # levels of 1/3 leave 1/3 running. () = no take-profit. Checked whenever
-    # the engine reconciles, not continuously at the broker.
-    take_profit_levels: tuple[tuple[float, float], ...] = ((0.015, 1 / 3), (0.025, 1 / 3))
+    # Take profit in steps: (multiple of the position's risk, fraction of the
+    # position to sell). The risk is the distance from the entry price to the
+    # stop the position started with, so with a 5% stop, 3x is +15% and 5x is
+    # +25%. Each level is taken once per position; the fraction is of the
+    # shares held when the first level is reached, so two levels of 1/3 leave
+    # 1/3 running. () = no take-profit. Checked whenever the engine
+    # reconciles, not continuously at the broker.
+    take_profit_levels: tuple[tuple[float, float], ...] = ((3.0, 1 / 3), (5.0, 1 / 3))
 
     # Wash-sale detection (see wash.py): "warn" flags a possible wash sale in
     # the output, the ledger and the message; "block" also refuses the buy;
