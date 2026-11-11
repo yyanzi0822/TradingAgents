@@ -26,7 +26,7 @@ from __future__ import annotations
 import hashlib
 import math
 from collections.abc import Callable
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from trading_engine.broker import Broker, OrderStatus
@@ -34,6 +34,7 @@ from trading_engine.config import RiskLimits
 from trading_engine.killswitch import KillSwitch
 from trading_engine.ledger import Ledger
 from trading_engine.models import TERMINAL_STATUSES, OrderRequest, Side
+from trading_engine.notify import Notifier, NullNotifier
 from trading_engine.risk import client_order_id
 from trading_engine.stops import StopBook
 
@@ -53,7 +54,9 @@ class Reconciler:
         dry_run: bool = False,
         require_market_open: bool = True,
         confirm: Callable[[str], bool] | None = None,
+        notifier: Notifier | None = None,
     ):
+        self.notifier = NullNotifier() if dry_run or notifier is None else notifier
         self.broker = broker
         self.ledger = ledger
         self.limits = limits or RiskLimits()
@@ -93,6 +96,7 @@ class Reconciler:
                 self.ledger.append("order_update", {"client_order_id": oid, "ticker": known.get("ticker"),
                                                     "status": "missing"})
                 notes.append(f"{known.get('ticker')}: order {oid[:14]} is not at the broker")
+                self.notifier.send(f"⚠️ {notes[-1]}")
                 continue
             if status.status == known.get("status") and status.filled_quantity == known.get("filled_quantity"):
                 continue
@@ -102,7 +106,11 @@ class Reconciler:
                 "filled_quantity": status.filled_quantity, "filled_avg_price": status.filled_avg_price,
             })
             notes.append(self._describe(status, known["role"]))
+            if status.status in TERMINAL_STATUSES and status.status != "filled" and known["role"] == "order":
+                self.notifier.send(f"⚠️ {notes[-1]}")          # expired, cancelled or rejected
             if known["role"] == "stop" and status.status == "filled":
+                self.notifier.send(f"🛑 STOP HIT {status.ticker}: sold {status.filled_quantity:g}"
+                                   + (f" @ {status.filled_avg_price:,.2f}" if status.filled_avg_price else ""))
                 self.ledger.append("stop_filled", {
                     "ticker": status.ticker, "trade_date": _market_date(status.filled_at),
                     "quantity": status.filled_quantity, "price": status.filled_avg_price,
@@ -150,7 +158,7 @@ class Reconciler:
             # No new orders of any kind. Stops already resting at the broker stay there.
             return ["kill switch active: stop orders left as they are"]
 
-        trade_date = trade_date or date.today().isoformat()
+        trade_date = trade_date or _market_date(None)
         notes: list[str] = []
         account = self.broker.get_account()
         open_orders = self.broker.open_orders()
@@ -260,6 +268,8 @@ class Reconciler:
         })
         self.ledger.append("stop_filled", {"ticker": ticker, "trade_date": trade_date, "quantity": quantity,
                                            "price": price, "client_order_id": order.client_order_id})
+        self.notifier.send(f"🛑 STOP EXIT {ticker}: price {price:,.2f} through stop {stop:,.2f}, "
+                           f"sold {quantity:g} at market ({status.status})")
         return f"{summary}; sold {quantity:g} at market -> {status.status}"
 
 
@@ -277,6 +287,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from dotenv import load_dotenv
 
+    from trading_engine import notify
     from trading_engine.broker import AlpacaPaperBroker
 
     load_dotenv()
@@ -292,6 +303,7 @@ def main(argv: list[str] | None = None) -> int:
         AlpacaPaperBroker(), Ledger(data_dir / "ledger.jsonl"),
         kill_switch=KillSwitch(data_dir / "KILL_SWITCH"),
         dry_run=args.dry_run, confirm=ask_yes_no if args.confirm else None,
+        notifier=notify.from_env(),
     )
     notes = reconciler.refresh_orders() if not args.dry_run else []
     notes += reconciler.sync_stops()

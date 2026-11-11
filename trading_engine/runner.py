@@ -33,14 +33,14 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date
 
 from trading_engine.broker import Broker
 from trading_engine.config import RiskLimits, SizingPolicy
 from trading_engine.killswitch import KillSwitch
 from trading_engine.ledger import Ledger
 from trading_engine.models import TERMINAL_STATUSES, AccountSnapshot, Side
-from trading_engine.reconcile import Reconciler
+from trading_engine.notify import Notifier, NullNotifier
+from trading_engine.reconcile import Reconciler, _market_date
 from trading_engine.risk import RiskEngine, client_order_id
 from trading_engine.sizing import intent_from_decision
 from trading_engine.stops import StopBook
@@ -124,6 +124,7 @@ class Runner:
         portfolio_builder: Callable[[AccountSnapshot], object] = portfolio_context,
         settle_seconds: float = 0.0,
         confirm: Callable[[str], bool] | None = None,
+        notifier: Notifier | None = None,
     ):
         self.broker = broker
         self.analyze = analyze
@@ -139,9 +140,16 @@ class Runner:
         self.settle_seconds = settle_seconds
         self.confirm = confirm
         self.stops = StopBook(ledger)
+        # Dry runs send nothing, messages included.
+        self.notifier = NullNotifier() if dry_run or notifier is None else notifier
         self.reconciler = Reconciler(broker, ledger, self.limits, self.kill_switch, stops=self.stops,
                                      dry_run=dry_run, require_market_open=require_market_open,
-                                     confirm=confirm)
+                                     confirm=confirm, notifier=self.notifier)
+
+    def _engage_kill_switch(self, reason: str) -> None:
+        self.kill_switch.engage(reason)
+        self.notifier.send(f"🚨 KILL SWITCH ON: {reason}\nNo new orders until you turn it off "
+                           f"(python -m trading_engine.killswitch off).")
 
     def _account(self, open_orders=None) -> AccountSnapshot:
         acct = self.broker.get_account()
@@ -200,13 +208,15 @@ class Runner:
         return None
 
     def run_cycle(self, tickers: list[str], trade_date: str | None = None) -> CycleReport:
-        trade_date = trade_date or date.today().isoformat()
+        # The market's date, not this machine's: late evening in California is
+        # already the next day in New York.
+        trade_date = trade_date or _market_date(None)
         report = CycleReport(trade_date)
         version = self.limits.version_tag()
 
         ok, msg = self.ledger.verify()
         if not ok:
-            self.kill_switch.engage(f"ledger integrity check failed: {msg}")
+            self._engage_kill_switch(f"ledger integrity check failed: {msg}")
         if self.kill_switch.active():
             report.halted = f"kill switch: {self.kill_switch.reason()}"
             return report
@@ -214,6 +224,7 @@ class Runner:
         # Trading on a stale view of orders and stops is worse than not trading.
         if not self._reconcile(report, trade_date):
             report.halted = "could not reconcile with the broker; nothing traded"
+            self.notifier.send(f"⚠️ Cycle {trade_date} did not run: could not reconcile with the broker.")
             return report
 
         market_open = self.broker.is_market_open()
@@ -330,14 +341,19 @@ class Runner:
                 })
                 outcome.action = "duplicate" if status.duplicate else "submitted"
                 outcome.detail = f"{summary} -> {status.status}"
+                if not status.duplicate:
+                    stop_note = f", stop {result.stop_price:,.2f}" if o.side is Side.BUY and result.stop_price else ""
+                    self.notifier.send(f"{o.side.value.upper()} {o.quantity:g} {ticker} @ ~{quote.price:,.2f}"
+                                       f"{stop_note}\nRating: {signal} · {status.status}")
 
             except Exception as exc:  # noqa: BLE001 - one bad ticker must not kill the cycle
                 errors += 1
                 logger.exception("cycle error for %s", ticker)
                 self.ledger.append("error", {"trade_date": trade_date, "ticker": ticker, "error": repr(exc)})
                 outcome.action, outcome.detail = "error", repr(exc)[:200]
+                self.notifier.send(f"⚠️ ERROR {ticker}: {repr(exc)[:300]}")
                 if errors >= self.max_errors:
-                    self.kill_switch.engage(f"{errors} errors in cycle {trade_date}")
+                    self._engage_kill_switch(f"{errors} errors in cycle {trade_date}")
                     report.halted = f"auto-suspended after {errors} errors"
 
         if not self.dry_run:

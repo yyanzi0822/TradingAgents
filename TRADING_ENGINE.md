@@ -43,6 +43,22 @@ you first unless you turn it on:
 - The kill switch refuses every new order. Stops already resting at the broker
   stay there and can still trigger.
 
+## Messages on your phone (Telegram)
+
+One-time setup:
+
+1. In Telegram, talk to `@BotFather`, send `/newbot`, and put the token it gives
+   you in `.env` as `TELEGRAM_BOT_TOKEN`.
+2. Open your new bot and send it any message.
+3. `python -m trading_engine.notify chat-id` prints your `TELEGRAM_CHAT_ID`; add it to `.env`.
+4. `python -m trading_engine.notify test` should reach your phone.
+
+You then get a message for every order sent, every stop that is hit, an order
+that expires or is rejected, any error, and the kill switch turning on.
+`python -m trading_engine.summary --send` sends the end-of-day summary. Dry
+runs send nothing. A message that fails to send is logged and never stops a
+cycle. Treat the bot token like a password: anyone holding it can post as your bot.
+
 ## Stops and reconciliation
 
 - **Where the stop comes from.** The price a buy was sized with: the trader's

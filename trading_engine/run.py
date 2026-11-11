@@ -21,6 +21,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from trading_engine import notify
 from trading_engine.killswitch import KillSwitch
 from trading_engine.ledger import Ledger
 from trading_engine.runner import Runner, tradingagents_analyzer
@@ -92,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
         require_market_open=not args.allow_closed,
         settle_seconds=args.settle_seconds,
         confirm=ask_yes_no if args.confirm else None,
+        notifier=notify.from_env(),
     )
     report = runner.run_cycle(tickers, args.date)
     print(report.render())
