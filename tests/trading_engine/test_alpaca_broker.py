@@ -159,3 +159,61 @@ def test_other_api_errors_propagate(broker):
     StubTrading.instances[0].get_order_by_client_id = boom
     with pytest.raises(APIError):
         broker.submit(OrderRequest("ta-x", "AAPL", Side.BUY, 1))
+
+
+# --- stop orders, open orders, cancel -------------------------------------------
+
+
+def test_protective_stop_is_a_gtc_stop_order(broker):
+    from alpaca.trading.requests import StopOrderRequest
+
+    stub = StubTrading.instances[-1]
+    broker.submit(OrderRequest("ta-stop-1", "AAPL", Side.SELL, 50, stop_price=95.0, time_in_force="gtc"))
+    req = stub.submitted[-1]
+    assert isinstance(req, StopOrderRequest)
+    assert req.stop_price == 95.0 and req.time_in_force is TimeInForce.GTC and req.side is OrderSide.SELL
+
+
+def test_open_orders_asks_for_open_only_and_reads_type_and_stop_price(broker):
+    from alpaca.trading.enums import OrderType, QueryOrderStatus
+
+    stub = StubTrading.instances[-1]
+    seen = {}
+
+    def get_orders(filter=None):
+        seen["status"] = filter.status
+        return [SimpleNamespace(id="alp-9", client_order_id="ta-stop-1", symbol="AAPL", side=OrderSide.SELL,
+                                qty="50", status=SimpleNamespace(value="new"), filled_qty="0",
+                                filled_avg_price=None, order_type=OrderType.STOP, stop_price="95.00",
+                                limit_price=None, filled_at=None)]
+
+    stub.get_orders = get_orders
+    (order,) = broker.open_orders()
+    assert seen["status"] is QueryOrderStatus.OPEN
+    assert order.is_stop and order.is_open and order.stop_price == 95.0 and order.remaining == 50
+
+
+def test_cancel_waits_for_the_broker_to_confirm(broker):
+    stub = StubTrading.instances[-1]
+    broker.submit(OrderRequest("ta-stop-1", "AAPL", Side.SELL, 50, stop_price=95.0, time_in_force="gtc"))
+    polls = []
+
+    def cancel_order_by_id(order_id):
+        polls.append(order_id)
+        stub.orders["ta-stop-1"].status = SimpleNamespace(value="pending_cancel")
+
+    real_get = stub.get_order_by_client_id
+
+    def get_order_by_client_id(client_id):
+        o = real_get(client_id)
+        if polls:
+            polls.append("poll")
+            if len(polls) >= 3:                       # confirmed on the second look
+                o.status = SimpleNamespace(value="canceled")
+        return o
+
+    stub.cancel_order_by_id = cancel_order_by_id
+    stub.get_order_by_client_id = get_order_by_client_id
+    result = broker.cancel("ta-stop-1")
+    assert polls[0] == "alp-1" and result.status == "canceled"
+    assert broker.cancel("never-existed") is None

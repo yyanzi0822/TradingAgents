@@ -24,7 +24,57 @@ broker account ──► TradingAgents (analysts → debate → trader → PM) �
                                                                          │
                                                                          ▼
                  Alpaca paper order, idempotent client_order_id → ledger
+                                                                         │
+                                                                         ▼
+        reconcile: record fills → one resting GTC stop order per position
 ```
+
+Reconciliation also runs at the start of every cycle, before any analysis.
+
+## It trades without asking
+
+A cycle analyzes, sizes and sends orders on its own, and the stop orders rest
+at Alpaca, so they trigger even when this program is not running. Nothing asks
+you first unless you turn it on:
+
+- `--confirm` shows each buy or sell (and a market exit on a breached stop) and
+  waits for `y`. Placing or moving a protective stop is never asked.
+- `--dry-run` sends nothing.
+- The kill switch refuses every new order. Stops already resting at the broker
+  stay there and can still trigger.
+
+## Stops and reconciliation
+
+- **Where the stop comes from.** The price a buy was sized with: the trader's
+  stop loss, or 8% below the price when it gives none. A position with no
+  recorded stop gets 8% below its average entry price.
+- **Only up.** While a position is open its stop can be raised, never lowered,
+  so a later decision from the agents cannot loosen it.
+- **Kept in step.** Each run checks that every position has exactly one stop
+  order for its whole quantity, and replaces it after a partial sell or an
+  added buy. The stop is taken down just before the engine trades that ticker
+  and put back at the end of the cycle.
+- **Already through the stop.** If the price is at or below the stop and no
+  stop order caught it, the position is sold at market (only while the market
+  is open, unless `--allow-closed`).
+- **Stopped out.** A filled stop is recorded, and that ticker is not bought
+  again the same day.
+- **Unfilled orders.** A ticker with an order still open is skipped, and
+  unfilled buys count against the stock, sector, gross-exposure and cash caps.
+  Fills, partial fills and expiries are written to the ledger as they are seen.
+
+Run it on its own at any time (for example a few minutes after a cycle, or
+before the open):
+
+```bash
+python -m trading_engine.reconcile            # update orders and stops now
+python -m trading_engine.reconcile --dry-run  # show what would change
+```
+
+Limits worth knowing: a stop order is a market order once triggered, so a gap
+down fills below the stop price; positions under one share cannot hold a stop
+order and are only checked when the engine runs; nothing exits a position on
+its time horizon yet.
 
 ## Setup
 
@@ -45,6 +95,9 @@ python -m trading_engine.run --tickers AAPL,MSFT,JPM
 # Whole starter universe (trading_engine/universe.json), fewer analysts to save cost
 python -m trading_engine.run --universe --analysts market,news,fundamentals
 
+# Ask before every buy or sell
+python -m trading_engine.run --tickers AAPL,MSFT --confirm
+
 # Emergency stop / resume
 python -m trading_engine.killswitch on "something looks wrong"
 python -m trading_engine.killswitch off
@@ -62,6 +115,10 @@ so a made-up dry-run account never feeds the real account's drawdown breaker.
 | 5% stock / 20% sector / 80% gross / 0.5% risk per trade | `risk.RiskEngine` |
 | 8% drawdown breaker halts buys (sells still allowed) | `risk.RiskEngine` + ledger high-water mark |
 | Stale (>15 min) or invalid quotes rejected | `risk.RiskEngine` |
+| Resting GTC stop order per position; stop only moves up | `reconcile.Reconciler`, `stops.StopBook` |
+| Unfilled buys count against every cap; ticker with an open order skipped | `risk.RiskEngine`, `runner.Runner` |
+| No trading if the broker cannot be reconciled | `runner.Runner` |
+| Optional confirmation before each order (`--confirm`) | `runner.Runner` |
 | Unknown-sector tickers rejected | `risk.RiskEngine` + `universe.json` |
 | One order per ticker per day; `client_order_id` from date + ticker + side, and the broker is checked for an earlier attempt before analysis | `runner.Runner`, `risk.client_order_id` |
 | Decision logged before order; hash-chained ledger (catches damage and mid-file edits; not tamper-proof unless you save `ledger head` elsewhere) | `ledger.Ledger` |
@@ -80,7 +137,6 @@ pytest tests/trading_engine
 ## Not built yet
 
 - Opportunity screener, Market Regime agent, Strategy agent (holding periods per strategy)
-- Exits driven by stop loss / time horizon between analysis runs
-- Broker reconciliation job for partial fills and orders accepted but not filled
+- Exits driven by time horizon (stop-loss exits are built: see above)
 - Portfolios B–D (SPY, momentum baseline, AI fixed 10-day horizon) and the evaluation layer
 - Scheduling (market-hours cron) and monitoring

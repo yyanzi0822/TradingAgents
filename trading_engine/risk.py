@@ -60,6 +60,7 @@ class RiskEngine:
         if account.equity <= 0:
             return 0.0
         total = sum(h.market_value for t, h in account.holdings.items() if self.sector_of(t) == sector)
+        total += sum(v for t, v in account.pending_buys.items() if self.sector_of(t) == sector)
         return total / account.equity
 
     def _round_qty(self, qty: float) -> float:
@@ -105,7 +106,8 @@ class RiskEngine:
 
         current = account.holdings.get(ticker)
         current_qty = current.quantity if current else 0.0
-        current_value = current_qty * quote.price
+        # A buy the broker has accepted but not filled already uses this room.
+        current_value = current_qty * quote.price + account.pending_buys.get(ticker, 0.0)
         target_value = max(target_w, 0.0) * account.equity
         delta_value = target_value - current_value
 
@@ -137,14 +139,16 @@ class RiskEngine:
             return RiskResult(False, None, reasons)
         caps["sector cap"] = (lim.max_sector_weight - self.sector_weight(account, sector)) * account.equity
 
-        caps["gross exposure cap"] = lim.max_gross_exposure * account.equity - account.gross_exposure
-        caps["available cash"] = account.cash
+        pending = account.pending_buy_value
+        caps["gross exposure cap"] = lim.max_gross_exposure * account.equity - account.gross_exposure - pending
+        caps["available cash"] = account.cash - pending
 
         stop = intent.stop_loss
         if stop is None or not (0 < stop < quote.price):
             if stop is not None:
                 adjustments.append(f"ignored stop {stop} (not below price); used default stop")
             stop = quote.price * (1 - lim.default_stop_pct)
+        stop = round(stop, 2)
         risk_per_share = quote.price - stop
         risk_budget = lim.risk_per_trade * account.equity
         caps["risk per trade"] = (risk_budget / risk_per_share) * quote.price
@@ -160,14 +164,14 @@ class RiskEngine:
         qty = self._round_qty(allowed_value / quote.price)
         if qty <= 0:
             return RiskResult(False, None, [f"{ticker} price too high for allowed size"], adjustments)
-        return self._approve(intent, ticker, Side.BUY, qty, reasons, adjustments)
+        return self._approve(intent, ticker, Side.BUY, qty, reasons, adjustments, stop_price=stop)
 
     @staticmethod
-    def _approve(intent, ticker, side, qty, reasons, adjustments) -> RiskResult:
+    def _approve(intent, ticker, side, qty, reasons, adjustments, stop_price=None) -> RiskResult:
         order = OrderRequest(
             client_order_id=client_order_id(intent.decision_id, ticker, side),
             ticker=ticker,
             side=side,
             quantity=qty,
         )
-        return RiskResult(True, order, reasons, adjustments)
+        return RiskResult(True, order, reasons, adjustments, stop_price=stop_price)

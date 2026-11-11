@@ -39,6 +39,14 @@ def default_ledger_path(dry_run: bool, data_dir: Path = DATA_DIR) -> Path:
     return data_dir / ("ledger-dryrun.jsonl" if dry_run else "ledger.jsonl")
 
 
+def ask_yes_no(question: str) -> bool:
+    """Console prompt for --confirm. Anything but y/yes, or no terminal, means no."""
+    try:
+        return input(f"{question}  Send it? [y/N] ").strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
+
+
 def load_sectors(path: Path = UNIVERSE_FILE) -> dict[str, str]:
     return json.loads(path.read_text(encoding="utf-8"))["tickers"]
 
@@ -53,6 +61,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--analysts", help="subset of analysts, e.g. market,news,fundamentals")
     p.add_argument("--dry-run", action="store_true", help="analyze and size, but never submit")
     p.add_argument("--allow-closed", action="store_true", help="submit even when the market is closed")
+    p.add_argument("--confirm", action="store_true",
+                   help="show each buy or sell and wait for y before sending it")
+    p.add_argument("--settle-seconds", type=float, default=20.0,
+                   help="how long to wait for fills before placing stop orders (default 20)")
     p.add_argument("--ledger", help="ledger file (default: ledger.jsonl, or ledger-dryrun.jsonl with --dry-run)")
     args = p.parse_args(argv)
 
@@ -78,6 +90,8 @@ def main(argv: list[str] | None = None) -> int:
         kill_switch=KillSwitch(DATA_DIR / "KILL_SWITCH"),
         dry_run=args.dry_run,
         require_market_open=not args.allow_closed,
+        settle_seconds=args.settle_seconds,
+        confirm=ask_yes_no if args.confirm else None,
     )
     report = runner.run_cycle(tickers, args.date)
     print(report.render())

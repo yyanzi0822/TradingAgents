@@ -12,11 +12,20 @@ returned as-is instead of being submitted again.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Protocol
 
-from trading_engine.models import AccountSnapshot, Holding, OrderRequest, Quote, Side
+from trading_engine.models import (
+    STOP_ORDER_TYPES,
+    TERMINAL_STATUSES,
+    AccountSnapshot,
+    Holding,
+    OrderRequest,
+    Quote,
+    Side,
+)
 
 
 class LiveTradingRefused(RuntimeError):
@@ -34,6 +43,22 @@ class OrderStatus:
     filled_quantity: float = 0.0
     filled_avg_price: float | None = None
     duplicate: bool = False     # True when we found it already submitted
+    order_type: str = "market"  # market / limit / stop / stop_limit / ...
+    stop_price: float | None = None
+    limit_price: float | None = None
+    filled_at: datetime | None = None
+
+    @property
+    def is_open(self) -> bool:
+        return self.status not in TERMINAL_STATUSES
+
+    @property
+    def is_stop(self) -> bool:
+        return self.order_type in STOP_ORDER_TYPES
+
+    @property
+    def remaining(self) -> float:
+        return max(self.quantity - self.filled_quantity, 0.0)
 
 
 class Broker(Protocol):
@@ -42,6 +67,8 @@ class Broker(Protocol):
     def is_market_open(self) -> bool: ...
     def get_order(self, client_order_id: str) -> OrderStatus | None: ...
     def submit(self, order: OrderRequest) -> OrderStatus: ...
+    def open_orders(self) -> list[OrderStatus]: ...
+    def cancel(self, client_order_id: str) -> OrderStatus | None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -125,18 +152,48 @@ class AlpacaPaperBroker:
             return replace(existing, duplicate=True)
 
         from alpaca.trading.enums import OrderSide, TimeInForce
-        from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
+        from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest, StopOrderRequest
 
         common = {
             "symbol": order.ticker,
             "qty": order.quantity,
             "side": OrderSide.BUY if order.side is Side.BUY else OrderSide.SELL,
-            "time_in_force": TimeInForce.DAY,
+            "time_in_force": TimeInForce.GTC if order.time_in_force == "gtc" else TimeInForce.DAY,
             "client_order_id": order.client_order_id,
         }
-        req = (LimitOrderRequest(limit_price=order.limit_price, **common)
-               if order.limit_price is not None else MarketOrderRequest(**common))
+        if order.stop_price is not None:
+            req = StopOrderRequest(stop_price=order.stop_price, **common)
+        elif order.limit_price is not None:
+            req = LimitOrderRequest(limit_price=order.limit_price, **common)
+        else:
+            req = MarketOrderRequest(**common)
         return self._status(self._trading.submit_order(order_data=req))
+
+    def open_orders(self) -> list[OrderStatus]:
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        orders = self._trading.get_orders(filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=500))
+        return [self._status(o) for o in orders]
+
+    def cancel(self, client_order_id: str, wait_seconds: float = 5.0) -> OrderStatus | None:
+        """Cancel and wait until the broker confirms.
+
+        Alpaca cancels asynchronously, and shares stay reserved by the order
+        until it does. Returning early would make the next sell of the same
+        shares fail, so this polls until the order is closed (or gives up and
+        returns the last state seen).
+        """
+        current = self.get_order(client_order_id)
+        if current is None or not current.is_open:
+            return current
+        self._trading.cancel_order_by_id(current.broker_order_id)
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            current = self.get_order(client_order_id)
+            if current is None or not current.is_open or time.monotonic() >= deadline:
+                return current
+            time.sleep(0.25)
 
     @staticmethod
     def _status(o) -> OrderStatus:
@@ -149,7 +206,21 @@ class AlpacaPaperBroker:
             status=str(getattr(o.status, "value", o.status)),
             filled_quantity=float(o.filled_qty or 0),
             filled_avg_price=float(o.filled_avg_price) if o.filled_avg_price else None,
+            order_type=AlpacaPaperBroker._order_type(o),
+            stop_price=AlpacaPaperBroker._price(o, "stop_price"),
+            limit_price=AlpacaPaperBroker._price(o, "limit_price"),
+            filled_at=getattr(o, "filled_at", None),
         )
+
+    @staticmethod
+    def _order_type(o) -> str:
+        kind = getattr(o, "order_type", None) or getattr(o, "type", None)
+        return str(getattr(kind, "value", kind) or "market")
+
+    @staticmethod
+    def _price(o, name: str) -> float | None:
+        value = getattr(o, name, None)
+        return float(value) if value else None
 
 
 # ---------------------------------------------------------------------------
@@ -165,10 +236,12 @@ class FakeBroker:
     market_open: bool = True
     orders: dict[str, OrderStatus] = field(default_factory=dict)
     fill_immediately: bool = True
+    entry_prices: dict[str, float] = field(default_factory=dict)
 
     def get_account(self) -> AccountSnapshot:
         holdings = {
-            t: Holding(t, q, q * self.prices[t]) for t, q in self.positions.items() if q
+            t: Holding(t, q, q * self.prices[t], self.entry_prices.get(t))
+            for t, q in self.positions.items() if q
         }
         equity = self.cash + sum(h.market_value for h in holdings.values())
         return AccountSnapshot(equity=equity, cash=self.cash, holdings=holdings,
@@ -186,13 +259,57 @@ class FakeBroker:
     def submit(self, order: OrderRequest) -> OrderStatus:
         if order.client_order_id in self.orders:
             return replace(self.orders[order.client_order_id], duplicate=True)
-        price = self.prices[order.ticker]
+        if order.side is Side.SELL:
+            # Like a real broker: shares reserved by an open sell cannot be sold again.
+            reserved = sum(o.remaining for o in self.open_orders()
+                           if o.ticker == order.ticker and o.side == Side.SELL.value)
+            available = self.positions.get(order.ticker, 0.0) - reserved
+            if order.quantity > available + 1e-9:
+                raise RuntimeError(f"insufficient qty available for {order.ticker}: "
+                                   f"requested {order.quantity:g}, available {available:g}")
+        is_stop = order.stop_price is not None
         status = OrderStatus(order.client_order_id, f"fake-{len(self.orders) + 1}", order.ticker,
-                             order.side.value, order.quantity, "accepted")
-        if self.fill_immediately:
-            sign = 1 if order.side is Side.BUY else -1
-            self.positions[order.ticker] = self.positions.get(order.ticker, 0.0) + sign * order.quantity
-            self.cash -= sign * order.quantity * price
-            status.status, status.filled_quantity, status.filled_avg_price = "filled", order.quantity, price
+                             order.side.value, order.quantity, "accepted",
+                             order_type="stop" if is_stop else ("limit" if order.limit_price else "market"),
+                             stop_price=order.stop_price, limit_price=order.limit_price)
         self.orders[order.client_order_id] = status
+        if self.fill_immediately and not is_stop:
+            self.fill(order.client_order_id)
         return status
+
+    def open_orders(self) -> list[OrderStatus]:
+        return [o for o in self.orders.values() if o.is_open]
+
+    def cancel(self, client_order_id: str) -> OrderStatus | None:
+        status = self.orders.get(client_order_id)
+        if status is not None and status.is_open:
+            status.status = "canceled"
+        return status
+
+    # -- test helpers: make the fake market move ------------------------------
+
+    def fill(self, client_order_id: str, quantity: float | None = None, price: float | None = None) -> OrderStatus:
+        """Fill an open order, fully or (with ``quantity``) partially."""
+        status = self.orders[client_order_id]
+        qty = min(quantity if quantity is not None else status.remaining, status.remaining)
+        price = price if price is not None else self.prices[status.ticker]
+        sign = 1 if status.side == Side.BUY.value else -1
+        held = self.positions.get(status.ticker, 0.0)
+        if sign > 0:
+            cost = self.entry_prices.get(status.ticker, price) * held + price * qty
+            self.entry_prices[status.ticker] = cost / (held + qty)
+        self.positions[status.ticker] = held + sign * qty
+        self.cash -= sign * qty * price
+        status.filled_quantity += qty
+        status.filled_avg_price = price
+        status.status = "filled" if status.remaining <= 1e-9 else "partially_filled"
+        if status.status == "filled":
+            status.filled_at = datetime.now(UTC)
+        return status
+
+    def set_price(self, ticker: str, price: float) -> None:
+        """Move the price; resting stop sells at or above it trigger."""
+        self.prices[ticker] = price
+        for o in self.open_orders():
+            if o.ticker == ticker and o.is_stop and o.stop_price is not None and price <= o.stop_price:
+                self.fill(o.client_order_id, price=price)

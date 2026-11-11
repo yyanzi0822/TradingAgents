@@ -8,6 +8,8 @@ package decides *whether it is allowed* and *how it is executed*:
 - ``broker``    Alpaca paper trading (live trading refused) and a fake broker
 - ``ledger``    append-only, hash-chained log of every decision and order
 - ``killswitch`` file-based emergency stop
+- ``stops``     stop price per position; can be raised, never lowered
+- ``reconcile`` records fills and keeps one resting stop order per position
 - ``runner``    one end-to-end cycle: analyze -> size -> risk check -> log -> order
 
 Design principle (from the project plan): AI makes investment decisions;

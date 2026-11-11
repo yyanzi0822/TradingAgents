@@ -7,6 +7,11 @@ from datetime import datetime
 from enum import StrEnum
 
 
+# Order states after which the broker will not change the order again.
+TERMINAL_STATUSES = frozenset({"filled", "canceled", "expired", "rejected", "replaced", "missing"})
+STOP_ORDER_TYPES = frozenset({"stop", "stop_limit", "trailing_stop"})
+
+
 class Side(StrEnum):
     BUY = "buy"
     SELL = "sell"
@@ -30,6 +35,14 @@ class AccountSnapshot:
     # Highest equity seen so far; the drawdown breaker measures from here.
     high_water_mark: float | None = None
     as_of: datetime | None = None
+    # Dollar value of buy orders the broker has accepted but not yet filled,
+    # per ticker. They are not in ``holdings`` yet, so the risk engine counts
+    # them separately against every cap.
+    pending_buys: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def pending_buy_value(self) -> float:
+        return sum(self.pending_buys.values())
 
     @property
     def gross_exposure(self) -> float:
@@ -71,6 +84,8 @@ class OrderRequest:
     side: Side
     quantity: float
     limit_price: float | None = None      # None = market order
+    stop_price: float | None = None       # set = stop order (protective sell)
+    time_in_force: str = "day"            # "day" or "gtc"
 
 
 @dataclass
@@ -80,3 +95,6 @@ class RiskResult:
     reasons: list[str] = field(default_factory=list)
     # Checks that shrank the order rather than rejecting it.
     adjustments: list[str] = field(default_factory=list)
+    # For an approved buy: the stop the size was based on. The runner hands it
+    # to the stop book so the same price is enforced at the broker.
+    stop_price: float | None = None

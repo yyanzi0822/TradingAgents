@@ -28,6 +28,10 @@ class RiskLimits:
     # Halt new buys once equity is this far below its high-water mark.
     max_drawdown: float = 0.08
 
+    # Keep a resting stop order at the broker for every position, at the stop
+    # the position was sized with. Off = stops only size the trade.
+    enforce_stops: bool = True
+
     # Reject decisions made on prices older than this.
     max_quote_age_seconds: int = 15 * 60
 

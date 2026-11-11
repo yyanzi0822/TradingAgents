@@ -1,24 +1,36 @@
 """One end-to-end trading cycle.
 
+Before any ticker: reconcile with the broker (``reconcile``) so order
+statuses and protective stops are current.
+
 For each ticker:
-    1. read the account from the broker (record equity for the drawdown breaker)
+    1. read the account and open orders from the broker (record equity for
+       the drawdown breaker; unfilled buys count against the caps)
     2. run the TradingAgents graph with the real book as portfolio context
     3. turn its rating into a target weight (``sizing``)
     4. write the decision to the ledger  <- before anything is sent
     5. run the deterministic risk checks (``risk``)
     6. submit the approved order, idempotently, and log the broker's answer
+       (the ticker's resting stop is cancelled first; a buy records its stop price)
+
+After the last ticker: wait briefly for fills, then reconcile again so every
+new position has its stop order resting at the broker.
 
 Safety rails:
     - the kill switch stops the cycle before any analysis or order
     - one order per ticker per trading day (a re-run cannot double-trade)
     - after ``max_errors`` failures in one cycle the kill switch is engaged
     - orders are only sent while the market is open, unless told otherwise
+    - a ticker with an order still open at the broker, or stopped out today,
+      is skipped
+    - ``confirm`` (optional) asks before each buy or sell is sent
     - ``dry_run`` does everything except submit
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
@@ -27,9 +39,11 @@ from trading_engine.broker import Broker
 from trading_engine.config import RiskLimits, SizingPolicy
 from trading_engine.killswitch import KillSwitch
 from trading_engine.ledger import Ledger
-from trading_engine.models import AccountSnapshot, Side
+from trading_engine.models import TERMINAL_STATUSES, AccountSnapshot, Side
+from trading_engine.reconcile import Reconciler
 from trading_engine.risk import RiskEngine, client_order_id
 from trading_engine.sizing import intent_from_decision
+from trading_engine.stops import StopBook
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +55,7 @@ AnalyzeFn = Callable[[str, str, object], tuple[dict, str]]
 class TickerOutcome:
     ticker: str
     signal: str | None = None
-    action: str = "none"          # none / submitted / duplicate / rejected / skipped / error / dry-run
+    action: str = "none"          # none / submitted / duplicate / rejected / skipped / declined / error / dry-run
     detail: str = ""
 
 
@@ -50,11 +64,16 @@ class CycleReport:
     trade_date: str
     outcomes: list[TickerOutcome] = field(default_factory=list)
     halted: str | None = None
+    # What reconciliation changed: fills, stops placed or moved, stop-outs.
+    notes: list[str] = field(default_factory=list)
 
     def render(self) -> str:
         lines = [f"Cycle {self.trade_date}" + (f" — HALTED: {self.halted}" if self.halted else "")]
         for o in self.outcomes:
             lines.append(f"  {o.ticker:<6} {str(o.signal or '-'):<11} {o.action:<10} {o.detail}")
+        if self.notes:
+            lines.append("  orders and stops:")
+            lines.extend(f"    {n}" for n in self.notes)
         return "\n".join(lines)
 
 
@@ -103,6 +122,8 @@ class Runner:
         require_market_open: bool = True,
         max_errors: int = 3,
         portfolio_builder: Callable[[AccountSnapshot], object] = portfolio_context,
+        settle_seconds: float = 0.0,
+        confirm: Callable[[str], bool] | None = None,
     ):
         self.broker = broker
         self.analyze = analyze
@@ -115,18 +136,55 @@ class Runner:
         self.require_market_open = require_market_open
         self.max_errors = max_errors
         self.portfolio_builder = portfolio_builder
+        self.settle_seconds = settle_seconds
+        self.confirm = confirm
+        self.stops = StopBook(ledger)
+        self.reconciler = Reconciler(broker, ledger, self.limits, self.kill_switch, stops=self.stops,
+                                     dry_run=dry_run, require_market_open=require_market_open,
+                                     confirm=confirm)
 
-    def _account(self) -> AccountSnapshot:
+    def _account(self, open_orders=None) -> AccountSnapshot:
         acct = self.broker.get_account()
         self.ledger.append("equity", {"equity": acct.equity, "cash": acct.cash})
+        # Buys the broker has accepted but not filled are not positions yet.
+        pending: dict[str, float] = {}
+        for o in (self.broker.open_orders() if open_orders is None else open_orders):
+            if o.side == Side.BUY.value and o.remaining > 0:
+                price = o.limit_price or self.broker.get_quote(o.ticker).price
+                pending[o.ticker] = pending.get(o.ticker, 0.0) + o.remaining * price
         return AccountSnapshot(
             equity=acct.equity, cash=acct.cash, holdings=acct.holdings,
             high_water_mark=self.ledger.high_water_mark(), as_of=acct.as_of,
+            pending_buys=pending,
         )
 
     def _already_traded(self, trade_date: str, ticker: str) -> bool:
         return any(r["data"].get("trade_date") == trade_date and r["data"].get("ticker") == ticker
                    for r in self.ledger.records("order"))
+
+    def _stopped_out(self, trade_date: str, ticker: str) -> bool:
+        return any(r["data"].get("trade_date") == trade_date and r["data"].get("ticker") == ticker
+                   for r in self.ledger.records("stop_filled"))
+
+    def _settle(self, order_ids: list[str]) -> None:
+        """Give this cycle's orders a moment to fill before stops are placed."""
+        deadline = time.monotonic() + self.settle_seconds
+        while order_ids and time.monotonic() < deadline:
+            states = [self.broker.get_order(oid) for oid in order_ids]
+            if all(s is None or s.status in TERMINAL_STATUSES for s in states):
+                return
+            time.sleep(min(2.0, self.settle_seconds))
+
+    def _reconcile(self, report: CycleReport, trade_date: str) -> bool:
+        try:
+            report.notes.extend(self.reconciler.run(trade_date))
+            return True
+        except Exception as exc:  # noqa: BLE001 - reported, and decides whether the cycle goes on
+            logger.exception("reconciliation failed")
+            self.ledger.append("error", {"trade_date": trade_date, "ticker": None,
+                                         "error": f"reconcile: {exc!r}"})
+            report.notes.append(f"reconciliation failed: {exc!r}"[:200])
+            return False
 
     def _order_at_broker(self, decision_id: str, ticker: str):
         """An order for this decision that the broker has but the ledger does not.
@@ -153,8 +211,14 @@ class Runner:
             report.halted = f"kill switch: {self.kill_switch.reason()}"
             return report
 
+        # Trading on a stale view of orders and stops is worse than not trading.
+        if not self._reconcile(report, trade_date):
+            report.halted = "could not reconcile with the broker; nothing traded"
+            return report
+
         market_open = self.broker.is_market_open()
         errors = 0
+        submitted: list[str] = []
 
         for raw in tickers:
             ticker = raw.strip().upper()
@@ -163,6 +227,9 @@ class Runner:
 
             if self._already_traded(trade_date, ticker):
                 outcome.action, outcome.detail = "skipped", "already traded today"
+                continue
+            if self._stopped_out(trade_date, ticker):
+                outcome.action, outcome.detail = "skipped", "stopped out today"
                 continue
             if self.kill_switch.active():
                 outcome.action, outcome.detail = "skipped", "kill switch engaged mid-cycle"
@@ -185,7 +252,15 @@ class Runner:
                                           f"{found.status}); recorded, not resubmitted")
                         continue
 
-                account = self._account()
+                open_orders = self.broker.open_orders()
+                in_flight = [o for o in open_orders if o.ticker == ticker and not o.is_stop]
+                if in_flight:
+                    o = in_flight[0]
+                    outcome.action = "skipped"
+                    outcome.detail = f"order still open at broker ({o.side} {o.remaining:g}, {o.status})"
+                    continue
+
+                account = self._account(open_orders)
                 final_state, signal = self.analyze(ticker, trade_date, self.portfolio_builder(account))
                 outcome.signal = signal
                 intent = intent_from_decision(decision_id=decision_id, ticker=ticker, rating=signal,
@@ -206,6 +281,7 @@ class Runner:
                     "decision_id": decision_id, "ticker": ticker, "approved": result.approved,
                     "reasons": result.reasons, "adjustments": result.adjustments,
                     "price": quote.price, "quote_time": quote.timestamp.isoformat(),
+                    "stop_price": result.stop_price,
                     "order": None if result.order is None else {
                         "side": result.order.side.value, "quantity": result.order.quantity,
                         "client_order_id": result.order.client_order_id},
@@ -229,7 +305,23 @@ class Runner:
                     outcome.action, outcome.detail = "skipped", f"market closed; would {summary}"
                     continue
 
+                if self.confirm and not self.confirm(f"{ticker} ({signal}): {summary}"):
+                    self.ledger.append("declined", {"decision_id": decision_id, "trade_date": trade_date,
+                                                    "ticker": ticker, "what": summary})
+                    outcome.action, outcome.detail = "declined", f"you declined: {summary}"
+                    continue
+
+                # Take the resting stop down before trading the ticker. A sell
+                # needs the shares it reserves, and Alpaca can refuse a buy
+                # while an opposite-side order is open (wash-trade check).
+                # The end-of-cycle sync puts a stop back for whatever is held,
+                # including when this order fails.
+                self.reconciler.cancel_stops(ticker, open_orders)
                 status = self.broker.submit(o)
+                submitted.append(o.client_order_id)
+                if o.side is Side.BUY and self.limits.enforce_stops and result.stop_price:
+                    self.stops.set(ticker, result.stop_price, source="sized with this stop",
+                                   decision_id=decision_id)
                 self.ledger.append("order", {
                     "decision_id": decision_id, "trade_date": trade_date, "ticker": ticker,
                     "client_order_id": o.client_order_id, "broker_order_id": status.broker_order_id,
@@ -248,4 +340,7 @@ class Runner:
                     self.kill_switch.engage(f"{errors} errors in cycle {trade_date}")
                     report.halted = f"auto-suspended after {errors} errors"
 
+        if not self.dry_run:
+            self._settle(submitted)
+        self._reconcile(report, trade_date)
         return report
