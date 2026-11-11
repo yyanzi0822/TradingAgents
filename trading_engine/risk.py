@@ -11,7 +11,7 @@ Order of checks:
 3. no target              -> no order (Hold / unreadable decision)
 4. sells                  -> always allowed (they reduce risk); never short
 5. drawdown breaker       -> reject new buys
-6. buys are capped by the smallest of: single-stock cap, sector headroom,
+6. buys are capped by the smallest of: single-stock cap (if one is set), sector headroom,
    gross-exposure headroom, available cash, and risk-per-trade sizing
 """
 
@@ -131,7 +131,8 @@ class RiskEngine:
         # 6. Buys: take the tightest of every cap.
         caps: dict[str, float] = {}
 
-        caps["single-stock cap"] = lim.max_position_weight * account.equity - current_value
+        if lim.max_position_weight is not None:
+            caps["single-stock cap"] = lim.max_position_weight * account.equity - current_value
 
         sector = self.sector_of(ticker)
         if sector == UNKNOWN_SECTOR:

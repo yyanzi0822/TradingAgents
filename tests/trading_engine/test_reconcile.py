@@ -57,7 +57,7 @@ def stops_at(broker, ticker):
 
 def test_filled_buy_gets_a_resting_stop_at_the_price_it_was_sized_with(env):
     broker, ledger, _ = env
-    # 0.5% of 100k = $500 risk; $5 stop distance -> 100 shares, capped at 5% = 50.
+    # 0.5% of 100k = $500 risk; $5 stop distance -> 100 shares; the 5% Buy target makes it 50.
     report = runner(env, stub({"AAPL": "Buy"})).run_cycle(["AAPL"], "2026-10-27")
 
     assert broker.positions["AAPL"] == 50

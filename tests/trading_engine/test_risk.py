@@ -27,30 +27,59 @@ def intent(ticker="AAPL", weight=0.05, stop=None, rating="Buy"):
     return TradeIntent("d1", ticker, rating, weight, stop_loss=stop)
 
 
-def test_default_stop_8pct_leaves_single_stock_cap_binding():
-    # $500 risk / $8 per share = 62 shares ($6,250) > 5% cap ($5,000) -> 50.
+def test_default_stop_8pct_leaves_the_5pct_target_binding():
+    # $500 risk / $8 per share = 62 shares ($6,250) > the 5% Buy target ($5,000) -> 50.
     r = engine().evaluate(intent(), account(), quote(), now=NOW)
     assert r.approved and r.order.side is Side.BUY
     assert r.order.quantity == 50
 
 
 def test_buy_capped_by_risk_per_trade_with_wide_stop():
-    # 0.5% of 100k = $500 risk; $25 stop distance -> 20 shares ($2,000 < 5% cap).
+    # 0.5% of 100k = $500 risk; $25 stop distance -> 20 shares ($2,000 < the 5% target).
     r = engine().evaluate(intent(stop=75.0), account(), quote(), now=NOW)
     assert r.order.quantity == 20
     assert any("risk per trade" in a for a in r.adjustments)
 
 
-def test_tight_stop_allows_full_single_stock_cap():
-    # $1 stop distance -> 500 shares allowed by risk; 5% cap = $5,000 = 50 shares.
+def test_tight_stop_allows_the_full_target():
+    # $1 stop distance -> 500 shares allowed by risk; 5% target = $5,000 = 50 shares.
     r = engine().evaluate(intent(stop=99.0), account(), quote(), now=NOW)
     assert r.order.quantity == 50
 
 
 def test_single_stock_cap_counts_existing_position():
     held = {"AAPL": Holding("AAPL", 40, 4_000.0)}
-    r = engine().evaluate(intent(weight=0.10, stop=99.0), account(cash=96_000, holdings=held), quote(), now=NOW)
+    r = engine(max_position_weight=0.05).evaluate(
+        intent(weight=0.10, stop=99.0), account(cash=96_000, holdings=held), quote(), now=NOW)
     assert r.order.quantity == 10  # only $1,000 of room left under 5%
+    assert any("single-stock cap" in a for a in r.adjustments)
+
+
+def test_default_single_stock_cap_is_30pct():
+    # A 10% target with a tight stop is filled in full.
+    r = engine().evaluate(intent(weight=0.10, stop=99.0), account(), quote(), now=NOW)
+    assert r.order.quantity == 100 and not r.adjustments
+    # A 40% target is cut to 30% once the sector cap is out of the way.
+    r = engine(max_sector_weight=0.50).evaluate(intent(weight=0.40, stop=99.0), account(), quote(), now=NOW)
+    assert r.order.quantity == 300 and any("single-stock cap" in a for a in r.adjustments)
+
+
+def test_cap_can_be_turned_off():
+    r = engine(max_position_weight=None, max_sector_weight=0.50).evaluate(
+        intent(weight=0.40, stop=99.0), account(), quote(), now=NOW)
+    assert r.order.quantity == 400
+
+
+def test_risk_per_trade_still_limits_a_default_stop_position():
+    # 8% default stop: $500 risk / $8 per share = 62 shares, 6.2% of equity, whatever the target.
+    r = engine().evaluate(intent(weight=0.15), account(), quote(), now=NOW)
+    assert r.order.quantity == 62
+    assert any("risk per trade" in a for a in r.adjustments)
+
+
+def test_sector_cap_is_below_the_stock_cap_so_it_binds_first():
+    r = engine().evaluate(intent(weight=0.30, stop=99.0), account(), quote(), now=NOW)
+    assert r.order.quantity == 200 and any("sector cap" in a for a in r.adjustments)
 
 
 def test_sector_cap():

@@ -16,7 +16,10 @@ from dataclasses import asdict, dataclass, field
 @dataclass(frozen=True)
 class RiskLimits:
     # Position and exposure caps, as fractions of account equity.
-    max_position_weight: float = 0.05      # single stock
+    # Single-stock cap. None = no cap. This is a ceiling, not a target: how
+    # much is actually bought comes from SizingPolicy below, and the sector
+    # cap and risk per trade can bind first.
+    max_position_weight: float | None = 0.30
     max_sector_weight: float = 0.20        # one sector
     max_gross_exposure: float = 0.80       # total invested
 

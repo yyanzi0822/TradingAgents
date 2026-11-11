@@ -19,7 +19,7 @@ broker account ──► TradingAgents (analysts → debate → trader → PM) �
              ledger: decision written BEFORE any order  ◄────────────────┤
                                                                          ▼
           risk engine (no LLM): kill switch → stale quote → long-only →
-          drawdown breaker → min(5% stock, 20% sector, 80% gross, cash,
+          drawdown breaker → min(30% stock, 20% sector, 80% gross, cash,
           0.5% risk-per-trade from the trader's stop or an 8% default)
                                                                          │
                                                                          ▼
@@ -128,7 +128,7 @@ so a made-up dry-run account never feeds the real account's drawdown breaker.
 | Rail | Where |
 |---|---|
 | Live trading refused (non-paper URL or account number) | `broker.AlpacaPaperBroker` |
-| 5% stock / 20% sector / 80% gross / 0.5% risk per trade | `risk.RiskEngine` |
+| 30% stock / 20% sector / 80% gross / 0.5% risk per trade. The stock cap is a ceiling: with a 5% Buy target and a 20% sector cap it does not bind until those are raised too | `risk.RiskEngine` |
 | 8% drawdown breaker halts buys (sells still allowed) | `risk.RiskEngine` + ledger high-water mark |
 | Stale (>15 min) or invalid quotes rejected | `risk.RiskEngine` |
 | Resting GTC stop order per position; stop only moves up | `reconcile.Reconciler`, `stops.StopBook` |
