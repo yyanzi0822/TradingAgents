@@ -67,3 +67,7 @@ class SizingPolicy:
         "Sell": 0.0,
     })
     underweight_keep_fraction: float = 0.5
+    # Ratings that may add to a position but never sell it down. Overweight
+    # is still a positive view, so a Buy that is downgraded to Overweight
+    # keeps its shares; only Underweight and Sell reduce.
+    add_only_ratings: tuple[str, ...] = ("Overweight",)

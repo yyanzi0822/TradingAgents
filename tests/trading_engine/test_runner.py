@@ -236,3 +236,31 @@ def test_saved_head_detects_records_removed_from_the_end(tmp_path):
     ledger.append("equity", {"equity": 9.0, "cash": 0.0})  # same length, different history
     ok, msg = ledger.verify(expected_head=head)
     assert not ok and "does not match" in msg
+
+
+def test_downgrade_from_buy_to_overweight_keeps_the_position(env):
+    broker, _, _ = env
+    make(env, stub({"AAPL": "Buy"})).run_cycle(["AAPL"], "2026-10-26")
+    assert broker.positions["AAPL"] == 50                       # 5%
+
+    report = make(env, stub({"AAPL": "Overweight"})).run_cycle(["AAPL"], "2026-10-27")
+    assert broker.positions["AAPL"] == 50                       # not sold down to 3%
+    assert report.outcomes[0].action == "none" and "hold" in report.outcomes[0].detail
+
+
+def test_overweight_still_buys_up_to_its_target(env):
+    broker, _, _ = env
+    make(env, stub({"AAPL": "Overweight"})).run_cycle(["AAPL"], "2026-10-26")
+    assert broker.positions["AAPL"] == 30                       # 3% from nothing
+    broker.positions["XOM"] = 20                                # 1% held ($1,000 at $50)
+    make(env, stub({"XOM": "Overweight"})).run_cycle(["XOM"], "2026-10-27")
+    assert broker.positions["XOM"] == 60                        # topped up to 3%
+
+
+def test_underweight_and_sell_still_reduce(env):
+    broker, _, _ = env
+    make(env, stub({"AAPL": "Buy"})).run_cycle(["AAPL"], "2026-10-26")
+    make(env, stub({"AAPL": "Underweight"})).run_cycle(["AAPL"], "2026-10-27")
+    assert broker.positions["AAPL"] == 25
+    make(env, stub({"AAPL": "Sell"})).run_cycle(["AAPL"], "2026-10-28")
+    assert broker.positions["AAPL"] == 0

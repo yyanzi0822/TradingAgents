@@ -24,7 +24,10 @@ def target_weight_for(rating: str, ticker: str, account: AccountSnapshot,
     if rating == "Underweight":
         current = account.weight(ticker)
         return current * policy.underweight_keep_fraction if current > 0 else None
-    return policy.targets[rating]
+    target = policy.targets[rating]
+    if rating in policy.add_only_ratings and target is not None and account.weight(ticker) >= target:
+        return None  # already at or above the target: keep, do not trim
+    return target
 
 
 def intent_from_decision(
