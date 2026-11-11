@@ -34,13 +34,17 @@ from trading_engine.models import (
 UNKNOWN_SECTOR = "Unknown"
 
 
-def client_order_id(decision_id: str, ticker: str, side: Side, quantity: float) -> str:
+def client_order_id(decision_id: str, ticker: str, side: Side) -> str:
     """Deterministic order id: re-submitting the same decision cannot double-trade.
+
+    The id depends only on the decision, ticker and side. Quantity is left out
+    on purpose: a retry after a price move sizes a different quantity, and it
+    must still collide with the order that is already at the broker.
 
     Alpaca rejects a second order with an id it has already seen, and the
     broker wrapper checks for it first as well.
     """
-    raw = f"{decision_id}|{ticker.upper()}|{side.value}|{quantity:.6f}"
+    raw = f"{decision_id}|{ticker.upper()}|{side.value}"
     return "ta-" + hashlib.sha256(raw.encode()).hexdigest()[:40]
 
 
@@ -161,7 +165,7 @@ class RiskEngine:
     @staticmethod
     def _approve(intent, ticker, side, qty, reasons, adjustments) -> RiskResult:
         order = OrderRequest(
-            client_order_id=client_order_id(intent.decision_id, ticker, side, qty),
+            client_order_id=client_order_id(intent.decision_id, ticker, side),
             ticker=ticker,
             side=side,
             quantity=qty,

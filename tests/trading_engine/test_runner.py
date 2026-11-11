@@ -145,3 +145,94 @@ def test_stop_loss_parsed_from_trader_plan():
     none = intent_from_decision(decision_id="d", ticker="AAPL", rating="Buy", account=acct,
                                 final_state={"trader_investment_plan": "**Stop Loss**: not provided"})
     assert none.stop_loss is None
+
+
+# --- regressions -------------------------------------------------------------
+
+
+class LostReplyBroker(FakeBroker):
+    """Accepts the first order, then raises as if the reply never arrived."""
+
+    def submit(self, order):
+        status = FakeBroker.submit(self, order)
+        if len(self.orders) == 1 and not getattr(self, "_failed", False):
+            self._failed = True
+            raise TimeoutError("reply lost")
+        return status
+
+
+def test_retry_after_lost_reply_does_not_buy_twice(tmp_path):
+    broker = LostReplyBroker(prices={"AAPL": 200.0}, fill_immediately=False)
+    env = (broker, Ledger(tmp_path / "ledger.jsonl"), KillSwitch(tmp_path / "KILL"))
+    analyze = stub({"AAPL": "Buy"})
+
+    first = make(env, analyze).run_cycle(["AAPL"], "2026-10-27")
+    assert first.outcomes[0].action == "error"
+
+    broker.prices["AAPL"] = 203.0          # a different quantity would be sized now
+    second = make(env, analyze).run_cycle(["AAPL"], "2026-10-27")
+
+    assert len(broker.orders) == 1
+    assert second.outcomes[0].action == "duplicate"
+    assert analyze.calls == ["AAPL"]       # the retry did not pay for a second analysis
+    recovered = env[1].records("order")
+    assert len(recovered) == 1 and recovered[0]["data"]["recovered"] is True
+
+    third = make(env, analyze).run_cycle(["AAPL"], "2026-10-27")
+    assert third.outcomes[0].detail == "already traded today"
+
+
+def test_retry_does_not_trade_when_the_agents_flip_sides(tmp_path):
+    broker = LostReplyBroker(prices={"AAPL": 200.0}, positions={"AAPL": 10}, fill_immediately=False)
+    env = (broker, Ledger(tmp_path / "ledger.jsonl"), KillSwitch(tmp_path / "KILL"))
+    make(env, stub({"AAPL": "Sell"})).run_cycle(["AAPL"], "2026-10-27")
+    make(env, stub({"AAPL": "Buy"})).run_cycle(["AAPL"], "2026-10-27")
+    assert [o.side for o in broker.orders.values()] == ["sell"]
+
+
+def test_dry_run_ledger_is_separate_from_the_real_one(tmp_path):
+    from trading_engine.run import default_ledger_path
+
+    dry, real = default_ledger_path(True, tmp_path), default_ledger_path(False, tmp_path)
+    assert dry != real
+
+    # A dry run on a made-up $100k book, then a real $50k account.
+    Runner(FakeBroker(prices={"AAPL": 100.0}), stub({"AAPL": "Buy"}), Ledger(dry), sectors=SECTORS,
+           kill_switch=KillSwitch(tmp_path / "KILL"), dry_run=True,
+           portfolio_builder=lambda a: None).run_cycle(["AAPL"], "2026-10-26")
+    report = Runner(FakeBroker(cash=50_000, prices={"AAPL": 100.0}), stub({"AAPL": "Buy"}), Ledger(real),
+                    sectors=SECTORS, kill_switch=KillSwitch(tmp_path / "KILL"),
+                    portfolio_builder=lambda a: None).run_cycle(["AAPL"], "2026-10-27")
+    assert report.outcomes[0].action == "submitted"
+
+
+def test_half_written_ledger_line_engages_kill_switch_instead_of_crashing(env):
+    broker, ledger, ks = env
+    ledger.append("equity", {"equity": 100_000.0, "cash": 100_000.0})
+    with ledger.path.open("a", encoding="utf-8") as f:
+        f.write('{"kind": "eq')
+    analyze = stub({"AAPL": "Buy"})
+
+    report = make(env, analyze).run_cycle(["AAPL"], "2026-10-27")
+
+    assert ks.active() and "unreadable record at line 2" in ks.reason()
+    assert report.halted and not analyze.calls and not broker.orders
+
+
+def test_saved_head_detects_records_removed_from_the_end(tmp_path):
+    ledger = Ledger(tmp_path / "ledger.jsonl")
+    for i in range(3):
+        ledger.append("equity", {"equity": float(i), "cash": 0.0})
+    head = ledger.head()
+    assert ledger.verify(expected_head=head) == (True, "ok")
+
+    lines = ledger.path.read_text(encoding="utf-8").splitlines()
+    ledger.path.write_text("\n".join(lines[:2]) + "\n", encoding="utf-8")
+
+    assert ledger.verify() == (True, "ok")                # the chain alone cannot see it
+    ok, msg = ledger.verify(expected_head=head)
+    assert not ok and "expects 3" in msg
+
+    ledger.append("equity", {"equity": 9.0, "cash": 0.0})  # same length, different history
+    ok, msg = ledger.verify(expected_head=head)
+    assert not ok and "does not match" in msg

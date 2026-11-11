@@ -29,6 +29,16 @@ UNIVERSE_FILE = Path(__file__).with_name("universe.json")
 DATA_DIR = Path(os.environ.get("TRADING_ENGINE_DIR", Path.home() / ".trading_engine"))
 
 
+def default_ledger_path(dry_run: bool, data_dir: Path = DATA_DIR) -> Path:
+    """Dry runs keep their own ledger.
+
+    A dry run can use a made-up account (FakeBroker, $100k). Its equity records
+    must not feed the high-water mark of the real paper account, or the
+    drawdown breaker measures from a number that account never had.
+    """
+    return data_dir / ("ledger-dryrun.jsonl" if dry_run else "ledger.jsonl")
+
+
 def load_sectors(path: Path = UNIVERSE_FILE) -> dict[str, str]:
     return json.loads(path.read_text(encoding="utf-8"))["tickers"]
 
@@ -43,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--analysts", help="subset of analysts, e.g. market,news,fundamentals")
     p.add_argument("--dry-run", action="store_true", help="analyze and size, but never submit")
     p.add_argument("--allow-closed", action="store_true", help="submit even when the market is closed")
-    p.add_argument("--ledger", default=str(DATA_DIR / "ledger.jsonl"))
+    p.add_argument("--ledger", help="ledger file (default: ledger.jsonl, or ledger-dryrun.jsonl with --dry-run)")
     args = p.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -63,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     runner = Runner(
         broker,
         tradingagents_analyzer(analysts=args.analysts.split(",") if args.analysts else None),
-        Ledger(args.ledger),
+        Ledger(args.ledger or default_ledger_path(args.dry_run)),
         sectors=sectors,
         kill_switch=KillSwitch(DATA_DIR / "KILL_SWITCH"),
         dry_run=args.dry_run,
@@ -71,6 +81,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     report = runner.run_cycle(tickers, args.date)
     print(report.render())
+    if not report.halted:
+        count, last = runner.ledger.head()
+        print(f"ledger head: {count} records, {last}")
     return 1 if report.halted else 0
 
 

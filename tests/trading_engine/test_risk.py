@@ -130,7 +130,8 @@ def test_stop_above_price_ignored():
 
 
 def test_client_order_id_is_deterministic():
-    a = client_order_id("d1", "aapl", Side.BUY, 10)
-    assert a == client_order_id("d1", "AAPL", Side.BUY, 10.0)
-    assert a != client_order_id("d2", "AAPL", Side.BUY, 10)
+    a = client_order_id("d1", "aapl", Side.BUY)
+    assert a == client_order_id("d1", "AAPL", Side.BUY)
+    assert a != client_order_id("d2", "AAPL", Side.BUY)
+    assert a != client_order_id("d1", "AAPL", Side.SELL)
     assert len(a) <= 48  # Alpaca's client_order_id limit

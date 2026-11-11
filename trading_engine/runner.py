@@ -27,8 +27,8 @@ from trading_engine.broker import Broker
 from trading_engine.config import RiskLimits, SizingPolicy
 from trading_engine.killswitch import KillSwitch
 from trading_engine.ledger import Ledger
-from trading_engine.models import AccountSnapshot
-from trading_engine.risk import RiskEngine
+from trading_engine.models import AccountSnapshot, Side
+from trading_engine.risk import RiskEngine, client_order_id
 from trading_engine.sizing import intent_from_decision
 
 logger = logging.getLogger(__name__)
@@ -128,6 +128,19 @@ class Runner:
         return any(r["data"].get("trade_date") == trade_date and r["data"].get("ticker") == ticker
                    for r in self.ledger.records("order"))
 
+    def _order_at_broker(self, decision_id: str, ticker: str):
+        """An order for this decision that the broker has but the ledger does not.
+
+        Happens when a submit reached the broker and the reply was lost. Either
+        side counts: a retry must not trade again even if the agents changed
+        their mind on the second run.
+        """
+        for side in Side:
+            status = self.broker.get_order(client_order_id(decision_id, ticker, side))
+            if status is not None:
+                return status
+        return None
+
     def run_cycle(self, tickers: list[str], trade_date: str | None = None) -> CycleReport:
         trade_date = trade_date or date.today().isoformat()
         report = CycleReport(trade_date)
@@ -156,10 +169,25 @@ class Runner:
                 continue
 
             try:
+                decision_id = f"{trade_date}|{ticker}|{version}"
+                if not self.dry_run:
+                    found = self._order_at_broker(decision_id, ticker)
+                    if found is not None:
+                        self.ledger.append("order", {
+                            "decision_id": decision_id, "trade_date": trade_date, "ticker": ticker,
+                            "client_order_id": found.client_order_id,
+                            "broker_order_id": found.broker_order_id, "side": found.side,
+                            "quantity": found.quantity, "status": found.status,
+                            "duplicate": True, "recovered": True,
+                        })
+                        outcome.action = "duplicate"
+                        outcome.detail = (f"order already at broker ({found.side} {found.quantity:g}, "
+                                          f"{found.status}); recorded, not resubmitted")
+                        continue
+
                 account = self._account()
                 final_state, signal = self.analyze(ticker, trade_date, self.portfolio_builder(account))
                 outcome.signal = signal
-                decision_id = f"{trade_date}|{ticker}|{version}"
                 intent = intent_from_decision(decision_id=decision_id, ticker=ticker, rating=signal,
                                               account=account, final_state=final_state, policy=self.sizing)
 

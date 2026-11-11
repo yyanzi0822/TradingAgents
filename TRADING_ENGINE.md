@@ -51,7 +51,8 @@ python -m trading_engine.killswitch off
 ```
 
 The ledger and kill-switch file live in `~/.trading_engine/` (override with
-`TRADING_ENGINE_DIR`).
+`TRADING_ENGINE_DIR`). Dry runs write to `ledger-dryrun.jsonl`, not `ledger.jsonl`,
+so a made-up dry-run account never feeds the real account's drawdown breaker.
 
 ## Safety rails
 
@@ -62,9 +63,9 @@ The ledger and kill-switch file live in `~/.trading_engine/` (override with
 | 8% drawdown breaker halts buys (sells still allowed) | `risk.RiskEngine` + ledger high-water mark |
 | Stale (>15 min) or invalid quotes rejected | `risk.RiskEngine` |
 | Unknown-sector tickers rejected | `risk.RiskEngine` + `universe.json` |
-| One order per ticker per day; deterministic `client_order_id` | `runner.Runner`, `risk.client_order_id` |
-| Decision logged before order; hash-chained ledger | `ledger.Ledger` |
-| Tampered ledger or 3 errors in a cycle → kill switch | `runner.Runner` |
+| One order per ticker per day; `client_order_id` from date + ticker + side, and the broker is checked for an earlier attempt before analysis | `runner.Runner`, `risk.client_order_id` |
+| Decision logged before order; hash-chained ledger (catches damage and mid-file edits; not tamper-proof unless you save `ledger head` elsewhere) | `ledger.Ledger` |
+| Damaged ledger or 3 errors in a cycle → kill switch | `runner.Runner` |
 
 All limits are in `trading_engine/config.py`. Each decision records
 `risk_version` (a hash of the limits), so changing a limit starts a new
