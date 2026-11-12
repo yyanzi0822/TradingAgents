@@ -133,3 +133,31 @@ def test_cancel_leaves_the_stop_order(tmp_path, desk):
 def test_manual_desk_refuses_unknown_side_quantity():
     with pytest.raises(ValueError):
         ManualDesk(FakeBroker(prices={"X": 1.0}), None, None).preview_order(Side.BUY, "X", None)
+
+
+def test_unconfirmed_action_is_dropped_automatically_with_a_message(tmp_path, desk):
+    d, broker, _, _ = desk
+    clock, sent = Clock(), []
+    bot = CommandBot("TOKEN", "1", KillSwitch(tmp_path / "KILL"), lambda: "status",
+                     send=sent.append, get=lambda *a: {"ok": True, "result": []},
+                     desk=lambda: d, clock=clock)
+    bot.handle("/buy CLS 1")
+    clock.t = 299
+    assert not bot.expire_pending() and bot.pending is not None
+    clock.t = 301
+    bot.poll_once()
+    assert bot.pending is None and broker.orders == {}
+    assert sent and "已自动放弃" in sent[-1] and "CLS" in sent[-1]
+    assert bot.handle("/confirm") == "没有待确认的操作。"
+
+
+def test_poll_wakes_up_in_time_to_expire(tmp_path, desk):
+    d, _, _, _ = desk
+    clock, params = Clock(), []
+    bot = CommandBot("TOKEN", "1", KillSwitch(tmp_path / "KILL"), lambda: "status",
+                     send=lambda t: True, get=lambda u, p, t: params.append(p) or {"ok": True, "result": []},
+                     desk=lambda: d, clock=clock)
+    bot.handle("/buy CLS 1")
+    clock.t = 290
+    bot.poll_once()
+    assert params[-1]["timeout"] <= 11

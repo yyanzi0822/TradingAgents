@@ -14,7 +14,8 @@ Send these to your bot (only TELEGRAM_CHAT_ID is obeyed; anyone else is ignored)
     /no              or  放弃          drop it
 
 Every /buy, /sell, /cancel and /rate is previewed first, with any risk-rule
-warnings, and runs only after /confirm (within five minutes).
+warnings, and runs only after /confirm. Left unconfirmed for five minutes, it
+is dropped automatically and you are told so.
 
 /stop does not cancel orders already filled at the broker, and it leaves the
 resting stop orders in place: they protect the positions you hold.
@@ -175,8 +176,21 @@ class CommandBot:
 
     # --- Telegram -----------------------------------------------------------
 
+    def expire_pending(self) -> bool:
+        """Drop an action left unconfirmed for five minutes, and say so."""
+        if self.pending is None or self._clock() - self.pending_at <= CONFIRM_SECONDS:
+            return False
+        dropped, self.pending = self.pending, None
+        self._send(f"⌛ 5 分钟内没有确认，已自动放弃：{dropped.text.splitlines()[0].lstrip('📝 ')}")
+        return True
+
     def poll_once(self, timeout: float = 25) -> int:
         """Fetch new messages, act on the owner's, and return how many were handled."""
+        self.expire_pending()
+        if self.pending is not None:
+            # Wake up in time to drop it the moment its five minutes are up.
+            left = CONFIRM_SECONDS - (self._clock() - self.pending_at)
+            timeout = max(1, min(timeout, int(left) + 1))
         offset = self._load_offset()
         params = {"timeout": int(timeout), "allowed_updates": '["message"]'}
         if offset is not None:
@@ -192,6 +206,7 @@ class CommandBot:
             if chat != self.chat_id:
                 logger.warning("ignored a message from chat %s (not TELEGRAM_CHAT_ID)", chat or "?")
                 continue
+            self.expire_pending()
             reply = self.handle(message.get("text", ""))
             self._send(reply[:MAX_LEN])
             handled += 1
