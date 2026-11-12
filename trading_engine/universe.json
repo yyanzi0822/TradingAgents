@@ -42,6 +42,13 @@
     "LIN": "Materials",
     "NEE": "Utilities",
     "AMT": "Real Estate",
+    "CLS": "Information Technology",
+    "COHR": "Information Technology",
+    "MU": "Information Technology",
+    "ALAB": "Information Technology",
+    "CRDO": "Information Technology",
+    "NBIS": "Information Technology",
+    "BE": "Industrials",
     "SPY": "Broad Market ETF"
   }
 }
