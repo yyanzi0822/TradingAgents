@@ -130,7 +130,7 @@ def test_sell_exits_position(env):
 def test_sizing_maps_ratings():
     acct = AccountSnapshot(equity=100_000, cash=90_000, holdings={})
     assert target_weight_for("Buy", "AAPL", acct) == 0.05
-    assert target_weight_for("Overweight", "AAPL", acct) is None
+    assert target_weight_for("Overweight", "AAPL", acct) == 0.025
     assert target_weight_for("Hold", "AAPL", acct) is None
     assert target_weight_for("Sell", "AAPL", acct) == 0.0
     assert target_weight_for("REVIEW", "AAPL", acct) is None
@@ -244,15 +244,20 @@ def test_downgrade_from_buy_to_overweight_keeps_the_position(env):
     assert broker.positions["AAPL"] == 50                       # 5%
 
     report = make(env, stub({"AAPL": "Overweight"})).run_cycle(["AAPL"], "2026-10-27")
-    assert broker.positions["AAPL"] == 50                       # not sold down to 3%
+    assert broker.positions["AAPL"] == 50                       # not sold down to 2.5%
     assert report.outcomes[0].action == "none" and "hold" in report.outcomes[0].detail
 
 
-def test_overweight_does_not_trade(env):
+def test_overweight_buys_a_smaller_position_than_buy(env):
     broker, ledger, _ = env
     report = make(env, stub({"AAPL": "Overweight"})).run_cycle(["AAPL"], "2026-10-26")
-    assert not broker.orders and report.outcomes[0].action == "none"
-    assert ledger.records("decision")[0]["data"]["signal"] == "Overweight"   # still logged
+    assert report.outcomes[0].action == "submitted"
+    assert broker.positions["AAPL"] == 25                       # 2.5% of $100k at $100
+    assert ledger.records("decision")[0]["data"]["signal"] == "Overweight"
+
+    # A later Buy tops it up to the Buy-sized 5%.
+    make(env, stub({"AAPL": "Buy"})).run_cycle(["AAPL"], "2026-10-27")
+    assert broker.positions["AAPL"] == 50
 
 
 def test_add_only_rating_tops_up_but_never_trims():

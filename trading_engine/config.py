@@ -79,13 +79,14 @@ class SizingPolicy:
 
     targets: dict[str, float | None] = field(default_factory=lambda: {
         "Buy": 0.05,
-        "Overweight": None,    # not traded: treated like Hold
+        "Overweight": 0.025,   # a smaller position than Buy
         "Hold": None,
         "Underweight": None,   # handled as "halve the position" in sizing.py
         "Sell": 0.0,
     })
     underweight_keep_fraction: float = 0.5
-    # Ratings that may add to a position but never sell it down. A Buy on a
-    # position that has grown past its target leaves it alone; only
+    # Ratings that may add to a position but never sell it down. A Buy or an
+    # Overweight on a position already at or past its target leaves it alone
+    # (a Buy-sized 5% position is not trimmed to 2.5% on a downgrade); only
     # Underweight, Sell and a stop reduce a position.
-    add_only_ratings: tuple[str, ...] = ("Buy",)
+    add_only_ratings: tuple[str, ...] = ("Buy", "Overweight")
