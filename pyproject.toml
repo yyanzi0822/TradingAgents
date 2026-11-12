@@ -41,6 +41,11 @@ dev = [
 bedrock = [
     "langchain-aws>=1.7.9",
 ]
+# Read-only monitoring page for the trading engine: pip install ".[dashboard]",
+# then streamlit run trading_engine/dashboard.py
+dashboard = [
+    "streamlit>=1.40",
+]
 # Alpaca paper trading for the trading_engine package: pip install ".[alpaca]".
 alpaca = [
     "alpaca-py>=0.40",
