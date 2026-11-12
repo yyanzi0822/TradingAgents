@@ -30,6 +30,7 @@ Safety rails:
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import date
 from collections.abc import Callable
@@ -60,6 +61,7 @@ class TickerOutcome:
     signal: str | None = None
     action: str = "none"          # none / submitted / duplicate / rejected / skipped / declined / error / dry-run
     detail: str = ""
+    thesis: str = ""              # the agents' final decision text, for the Telegram report
 
 
 @dataclass
@@ -78,6 +80,45 @@ class CycleReport:
             lines.append("  orders and stops:")
             lines.extend(f"    {n}" for n in self.notes)
         return "\n".join(lines)
+
+    def telegram_blocks(self, *, dry_run: bool = False) -> list[str]:
+        """The report as Telegram text: a header, then one block per ticker.
+
+        Every ticker gets its rating, what the engine did and why, and the
+        agents' executive summary, so a Hold or a rejected order is visible too.
+        """
+        head = f"📊 交易周期 {self.trade_date}" + ("（dry run，不下单）" if dry_run else "")
+        if self.halted:
+            head += f"\n🚨 已停止: {self.halted}"
+        blocks = [head]
+        for o in self.outcomes:
+            label = ACTION_LABELS.get(o.action, o.action)
+            rating = f"{o.signal}（{RATING_LABELS.get(o.signal, o.signal)}）" if o.signal else "-"
+            block = f"{o.ticker} · {rating}\n操作: {label}" + (f" — {o.detail}" if o.detail else "")
+            summary = executive_summary(o.thesis)
+            if summary:
+                block += f"\n理由: {summary}"
+            blocks.append(block)
+        if self.notes:
+            blocks.append("订单和止损:\n" + "\n".join(f"• {n}" for n in self.notes))
+        return blocks
+
+
+RATING_LABELS = {"Buy": "买入", "Overweight": "增持", "Hold": "持有",
+                 "Underweight": "减持", "Sell": "卖出", "REVIEW": "无法解读"}
+ACTION_LABELS = {"none": "不操作", "submitted": "已下单", "duplicate": "订单已存在",
+                 "rejected": "被风控拦下", "skipped": "跳过", "declined": "你已拒绝",
+                 "error": "出错", "dry-run": "模拟（未下单）"}
+
+
+def executive_summary(thesis: str, limit: int = 400) -> str:
+    """The "Executive Summary" paragraph of a decision, shortened for a phone."""
+    if not thesis:
+        return ""
+    m = re.search(r"\*\*Executive Summary\*\*:?\s*(.+?)(?:\n\s*\n|\n\*\*|$)", thesis, re.S)
+    text = (m.group(1) if m else thesis).replace("**", "").strip()
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 def tradingagents_analyzer(config: dict | None = None, analysts: list[str] | None = None) -> AnalyzeFn:
@@ -293,6 +334,7 @@ class Runner:
                 outcome.signal = signal
                 intent = intent_from_decision(decision_id=decision_id, ticker=ticker, rating=signal,
                                               account=account, final_state=final_state, policy=self.sizing)
+                outcome.thesis = intent.thesis
                 # Profit was taken on this position: a Buy must not buy the sold part back.
                 profit_taken = (signal in self.sizing.add_only_ratings and intent.target_weight is not None
                                 and bool(TakeProfitBook(self.ledger).taken(ticker)))

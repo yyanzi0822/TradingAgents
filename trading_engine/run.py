@@ -9,6 +9,9 @@ Examples:
 
     # Whole starter universe, cheap model settings
     python -m trading_engine.run --universe --analysts market,news,fundamentals
+
+A real run sends every ticker's rating, action and reason to Telegram;
+add --notify to a dry run to send it too.
 """
 
 from __future__ import annotations
@@ -67,6 +70,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--settle-seconds", type=float, default=20.0,
                    help="how long to wait for fills before placing stop orders (default 20)")
     p.add_argument("--ledger", help="ledger file (default: ledger.jsonl, or ledger-dryrun.jsonl with --dry-run)")
+    p.add_argument("--notify", action="store_true",
+                   help="send the per-ticker report to Telegram in a dry run too (a real run always sends it)")
     args = p.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -97,6 +102,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     report = runner.run_cycle(tickers, args.date)
     print(report.render())
+    if not args.dry_run or args.notify:
+        notifier = notify.from_env()
+        if isinstance(notifier, notify.NullNotifier):
+            print("(report not sent: set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)")
+        elif not notify.send_blocks(notifier, report.telegram_blocks(dry_run=args.dry_run)):
+            print("(report not fully sent to Telegram; see the log)")
     if not report.halted:
         count, last = runner.ledger.head()
         print(f"ledger head: {count} records, {last}")

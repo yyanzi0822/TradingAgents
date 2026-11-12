@@ -138,3 +138,40 @@ def test_daily_summary_lists_positions_stops_and_todays_activity(env):
     assert "Today: 1 order(s), 1 stop-out(s), 0 error(s)" in text
     assert "buy 50 AAPL — filled" in text and "stopped out JPM 10 @ 180.00" in text
     assert text.endswith("Kill switch: off")
+
+
+# --- per-ticker cycle report -------------------------------------------------
+
+THESIS = ("**Rating**: Hold\n\n**Executive Summary**: Keep the position; the **trend** holds.\n\n"
+          "**Investment Thesis**: long text that is not sent")
+
+
+def test_report_lists_every_ticker_with_rating_action_and_reason(env):
+    def analyze(ticker, trade_date, portfolio):
+        signal = {"AAPL": "Buy", "JPM": "Hold"}[ticker]
+        return {"trader_investment_plan": PLAN, "final_trade_decision": THESIS}, signal
+
+    report = runner(env, analyze, dry_run=True).run_cycle(["AAPL", "JPM"], TODAY)
+    blocks = report.telegram_blocks(dry_run=True)
+    assert "dry run" in blocks[0]
+    aapl, jpm = blocks[1], blocks[2]
+    assert aapl.startswith("AAPL · Buy（买入）") and "模拟（未下单）" in aapl
+    assert jpm.startswith("JPM · Hold（持有）") and "不操作" in jpm
+    # The executive summary only, without markdown bold.
+    assert "理由: Keep the position; the trend holds." in jpm
+    assert "Investment Thesis" not in jpm
+
+
+def test_executive_summary_falls_back_and_is_shortened():
+    from trading_engine.runner import executive_summary
+    assert executive_summary("") == ""
+    assert executive_summary("plain text") == "plain text"
+    assert executive_summary("x" * 1000, limit=50).endswith("…")
+    assert len(executive_summary("x" * 1000, limit=50)) == 50
+
+
+def test_send_blocks_packs_messages_without_splitting_a_block():
+    from trading_engine.notify import send_blocks
+    inbox = Inbox()
+    assert send_blocks(inbox, ["a" * 30, "b" * 30, "c" * 30], limit=70)
+    assert inbox.messages == ["a" * 30 + "\n\n" + "b" * 30, "c" * 30]

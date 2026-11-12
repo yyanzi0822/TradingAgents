@@ -68,6 +68,24 @@ def _requests_post(url: str, payload: dict, timeout: float) -> dict:
     return requests.post(url, json=payload, timeout=timeout).json()
 
 
+def send_blocks(notifier: Notifier, blocks: list[str], *, limit: int = MAX_LEN) -> bool:
+    """Send text blocks packed into as few messages as fit Telegram's limit.
+
+    A block is never split across two messages unless it is longer than one
+    message by itself. Returns True only if every message was sent.
+    """
+    messages: list[str] = []
+    for block in blocks:
+        if messages and len(messages[-1]) + 2 + len(block) <= limit:
+            messages[-1] += "\n\n" + block
+        else:
+            messages.append(block)
+    ok = True
+    for text in messages:
+        ok = notifier.send(text) and ok
+    return ok
+
+
 def from_env() -> Notifier:
     token, chat_id = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
     if token and chat_id:
