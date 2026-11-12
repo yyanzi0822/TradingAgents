@@ -40,6 +40,7 @@ from trading_engine.broker import Broker
 from trading_engine.config import RiskLimits, SizingPolicy
 from trading_engine.killswitch import KillSwitch
 from trading_engine.ledger import Ledger
+from trading_engine.manual import rating_override
 from trading_engine.models import TERMINAL_STATUSES, AccountSnapshot, Side
 from trading_engine.notify import Notifier, NullNotifier
 from trading_engine.reconcile import Reconciler, _market_date
@@ -62,6 +63,7 @@ class TickerOutcome:
     action: str = "none"          # none / submitted / duplicate / rejected / skipped / declined / error / dry-run
     detail: str = ""
     thesis: str = ""              # the agents' final decision text, for the Telegram report
+    ai_signal: str | None = None  # the agents' rating when you overrode it with /rate
 
 
 @dataclass
@@ -94,6 +96,8 @@ class CycleReport:
         for o in self.outcomes:
             label = ACTION_LABELS.get(o.action, o.action)
             rating = f"{o.signal}（{RATING_LABELS.get(o.signal, o.signal)}）" if o.signal else "-"
+            if o.ai_signal:
+                rating += f" · 你的评级，AI 是 {o.ai_signal}"
             block = f"{o.ticker} · {rating}\n操作: {label}" + (f" — {o.detail}" if o.detail else "")
             summary = executive_summary(o.thesis)
             if summary:
@@ -331,6 +335,10 @@ class Runner:
 
                 account = self._account(open_orders)
                 final_state, signal = self.analyze(ticker, trade_date, self.portfolio_builder(account))
+                ai_signal = signal
+                override = rating_override(self.ledger, ticker, trade_date)
+                if override and override != signal:
+                    outcome.ai_signal, signal = signal, override
                 outcome.signal = signal
                 intent = intent_from_decision(decision_id=decision_id, ticker=ticker, rating=signal,
                                               account=account, final_state=final_state, policy=self.sizing)
@@ -344,7 +352,8 @@ class Runner:
                 # Log the decision before the market can answer.
                 self.ledger.append("decision", {
                     "decision_id": decision_id, "trade_date": trade_date, "ticker": ticker,
-                    "signal": signal, "target_weight": intent.target_weight,
+                    "signal": signal, "ai_signal": ai_signal, "overridden": signal != ai_signal,
+                    "target_weight": intent.target_weight,
                     "stop_loss": intent.stop_loss, "risk_version": version,
                     "thesis": intent.thesis,
                 })

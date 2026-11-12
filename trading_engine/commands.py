@@ -6,6 +6,16 @@ Send these to your bot (only TELEGRAM_CHAT_ID is obeyed; anyone else is ignored)
     /resume          or  恢复   turn it off again
     /status          or  状态   account, positions, stops and the kill switch
 
+    /buy CLS 20      or  买 CLS 20     your own market order (see manual.py)
+    /sell CLS [10]   or  卖 CLS [10]   sell 10 shares, or the whole position
+    /cancel CLS      or  撤单 CLS      cancel CLS's open orders (not its stop)
+    /rate CLS Buy    or  评级 CLS 买入  use your rating in today's next cycle
+    /confirm         or  确认          carry out the action just previewed
+    /no              or  放弃          drop it
+
+Every /buy, /sell, /cancel and /rate is previewed first, with any risk-rule
+warnings, and runs only after /confirm (within five minutes).
+
 /stop does not cancel orders already filled at the broker, and it leaves the
 resting stop orders in place: they protect the positions you hold.
 
@@ -24,6 +34,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from trading_engine.killswitch import KillSwitch
+from trading_engine.models import Side
 from trading_engine.notify import API, MAX_LEN
 
 logger = logging.getLogger(__name__)
@@ -35,12 +46,25 @@ ALIASES = {
     "resume": "resume", "恢复": "resume", "start": "help",
     "status": "status", "状态": "status",
     "help": "help", "帮助": "help",
+    "buy": "buy", "买": "buy", "买入": "buy",
+    "sell": "sell", "卖": "sell", "卖出": "sell",
+    "cancel": "cancel", "撤单": "cancel",
+    "rate": "rate", "评级": "rate",
+    "confirm": "confirm", "yes": "confirm", "y": "confirm", "确认": "confirm", "是": "confirm",
+    "no": "no", "n": "no", "放弃": "no", "不": "no",
 }
+
+CONFIRM_SECONDS = 300
 
 HELP = ("可用命令：\n"
         "/stop [原因] 或 停止 — 打开紧急开关，拒绝所有新订单\n"
         "/resume 或 恢复 — 关闭紧急开关，恢复交易\n"
-        "/status 或 状态 — 账户、持仓、止损和开关状态")
+        "/status 或 状态 — 账户、持仓、止损和开关状态\n"
+        "/buy CLS 20 或 买 CLS 20 — 手动买入\n"
+        "/sell CLS 10 或 卖 CLS — 手动卖出（不写股数=全部卖出）\n"
+        "/cancel CLS 或 撤单 CLS — 撤销未成交的挂单（不撤止损单）\n"
+        "/rate CLS Buy 或 评级 CLS 买入 — 今天用你的评级（/rate CLS AI 取消）\n"
+        "手动操作都会先预览和提醒，回复 /confirm 才执行")
 
 
 def parse_command(text: str) -> tuple[str | None, str]:
@@ -56,8 +80,15 @@ class CommandBot:
     def __init__(self, token: str, chat_id: str, kill_switch: KillSwitch,
                  status: Callable[[], str], *, offset_path: Path | None = None,
                  get: Callable[[str, dict, float], dict] | None = None,
-                 send: Callable[[str], bool] | None = None):
+                 send: Callable[[str], bool] | None = None,
+                 desk: Callable[[], object] | None = None,
+                 clock: Callable[[], float] = time.monotonic):
         self._token = token
+        self._desk_factory = desk
+        self._desk = None
+        self._clock = clock
+        self.pending = None
+        self.pending_at = 0.0
         self.chat_id = str(chat_id)
         self.kill_switch = kill_switch
         self.status = status
@@ -70,6 +101,13 @@ class CommandBot:
     def handle(self, text: str) -> str:
         cmd, arg = parse_command(text)
         ks = self.kill_switch
+        if cmd in ("buy", "sell", "cancel", "rate"):
+            return self._preview(cmd, arg)
+        if cmd == "confirm":
+            return self._confirm()
+        if cmd == "no":
+            had, self.pending = self.pending, None
+            return "已放弃。" if had else "没有待确认的操作。"
         if cmd == "stop":
             already = ks.active()
             ks.engage(f"Telegram /stop: {arg}" if arg else "Telegram /stop")
@@ -88,6 +126,52 @@ class CommandBot:
                 state = f"打开 — {ks.reason()}" if ks.active() else "关闭"
                 return f"⚠️ 读取账户失败（{type(exc).__name__}）。\n紧急开关：{state}"
         return HELP
+
+    # --- manual actions: preview, then /confirm ----------------------------
+
+    def desk(self):
+        if self._desk is None:
+            if self._desk_factory is None:
+                raise RuntimeError("manual trading is not set up")
+            self._desk = self._desk_factory()
+        return self._desk
+
+    def _preview(self, cmd: str, arg: str) -> str:
+        words = arg.split()
+        usage = {"buy": "/buy CLS 20", "sell": "/sell CLS 10（或 /sell CLS 全部卖出）",
+                 "cancel": "/cancel CLS", "rate": "/rate CLS Buy"}[cmd]
+        if not words or (cmd == "buy" and len(words) < 2) or (cmd == "rate" and len(words) < 2):
+            return f"格式：{usage}"
+        ticker = words[0].upper()
+        try:
+            if cmd in ("buy", "sell"):
+                qty = float(words[1]) if len(words) > 1 else None
+                side = Side.BUY if cmd == "buy" else Side.SELL
+                pending = self.desk().preview_order(side, ticker, qty)
+            elif cmd == "cancel":
+                pending = self.desk().preview_cancel(ticker)
+            else:
+                pending = self.desk().preview_rate(ticker, words[1])
+        except ValueError as exc:
+            return f"❌ {exc}" if str(exc) else f"格式：{usage}"
+        except Exception as exc:  # noqa: BLE001 - report, never crash the listener
+            logger.warning("preview failed: %s", type(exc).__name__)
+            return f"⚠️ 预览失败（{type(exc).__name__}），没有执行任何操作。"
+        replaced = "（之前待确认的操作已作废）\n" if self.pending else ""
+        self.pending, self.pending_at = pending, self._clock()
+        return replaced + pending.text
+
+    def _confirm(self) -> str:
+        pending, self.pending = self.pending, None
+        if pending is None:
+            return "没有待确认的操作。"
+        if self._clock() - self.pending_at > CONFIRM_SECONDS:
+            return "⌛ 超过 5 分钟没确认，这个操作已作废，请重新发送。"
+        try:
+            return self.desk().execute(pending)
+        except Exception as exc:  # noqa: BLE001 - report, never crash the listener
+            logger.warning("manual action failed: %s", type(exc).__name__)
+            return f"⚠️ 执行失败（{type(exc).__name__}: {str(exc)[:200]}）。请用 /status 查看实际状态。"
 
     # --- Telegram -----------------------------------------------------------
 
@@ -160,6 +244,14 @@ def _live_status(kill_switch: KillSwitch) -> Callable[[], str]:
     return status
 
 
+def _live_desk(kill_switch: KillSwitch):
+    from trading_engine.broker import AlpacaPaperBroker
+    from trading_engine.ledger import Ledger
+    from trading_engine.manual import ManualDesk
+
+    return ManualDesk(AlpacaPaperBroker(), Ledger(DATA_DIR / "ledger.jsonl"), kill_switch)
+
+
 def main(argv: list[str]) -> int:
     from dotenv import load_dotenv
 
@@ -172,8 +264,9 @@ def main(argv: list[str]) -> int:
         print("Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env (see trading_engine/notify.py).")
         return 1
     ks = KillSwitch(DATA_DIR / "KILL_SWITCH")
-    bot = CommandBot(token, chat_id, ks, _live_status(ks), offset_path=DATA_DIR / "telegram_offset")
-    logger.info("listening for /stop, /resume and /status from chat %s", chat_id)
+    bot = CommandBot(token, chat_id, ks, _live_status(ks), offset_path=DATA_DIR / "telegram_offset",
+                     desk=lambda: _live_desk(ks))
+    logger.info("listening for commands from chat %s", chat_id)
     bot.run_forever()
     return 0
 
