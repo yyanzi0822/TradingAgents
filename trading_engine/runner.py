@@ -48,6 +48,7 @@ from trading_engine.risk import RiskEngine, client_order_id
 from trading_engine.sizing import intent_from_decision
 from trading_engine.stops import StopBook
 from trading_engine.takeprofit import TakeProfitBook
+from trading_engine.usage import Usage, UsageCounter, fmt_tokens
 from trading_engine.wash import WashSaleChecker
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,7 @@ class TickerOutcome:
     detail: str = ""
     thesis: str = ""              # the agents' final decision text, for the Telegram report
     ai_signal: str | None = None  # the agents' rating when you overrode it with /rate
+    usage: Usage | None = None    # model calls and tokens spent on this ticker
 
 
 @dataclass
@@ -74,6 +76,11 @@ class CycleReport:
     # What reconciliation changed: fills, stops placed or moved, stop-outs.
     notes: list[str] = field(default_factory=list)
 
+    @property
+    def usage(self) -> Usage | None:
+        used = [o.usage for o in self.outcomes if o.usage is not None]
+        return sum(used, Usage()) if used else None
+
     def render(self) -> str:
         lines = [f"Cycle {self.trade_date}" + (f" — HALTED: {self.halted}" if self.halted else "")]
         for o in self.outcomes:
@@ -81,6 +88,16 @@ class CycleReport:
         if self.notes:
             lines.append("  orders and stops:")
             lines.extend(f"    {n}" for n in self.notes)
+        if self.usage:
+            lines.append("usage:")
+            for o in self.outcomes:
+                if o.usage:
+                    u = o.usage
+                    lines.append(f"  {o.ticker:<6} {u.llm_calls:>3} calls {u.tokens_in:>9,} in {u.tokens_out:>8,} out"
+                                 f" {u.seconds:>6.0f}s")
+            u = self.usage
+            lines.append(f"  TOTAL  {u.llm_calls:>3} calls {u.tokens_in:>9,} in {u.tokens_out:>8,} out"
+                         f" {u.seconds:>6.0f}s")
         return "\n".join(lines)
 
     def telegram_blocks(self, *, dry_run: bool = False) -> list[str]:
@@ -105,6 +122,11 @@ class CycleReport:
             blocks.append(block)
         if self.notes:
             blocks.append("订单和止损:\n" + "\n".join(f"• {n}" for n in self.notes))
+        if self.usage:
+            u = self.usage
+            blocks.append(f"🔢 用量：{u.llm_calls} 次调用，{fmt_tokens(u.tokens)} token"
+                          f"（输入 {fmt_tokens(u.tokens_in)} / 输出 {fmt_tokens(u.tokens_out)}），"
+                          f"用时 {u.seconds / 60:.0f} 分钟")
         return blocks
 
 
@@ -133,11 +155,17 @@ def tradingagents_analyzer(config: dict | None = None, analysts: list[str] | Non
     cfg = DEFAULT_CONFIG.copy()
     cfg.update(config or {})
     kwargs = {"selected_analysts": analysts} if analysts else {}
-    graph = TradingAgentsGraph(config=cfg, **kwargs)
+    counter = UsageCounter()
+    graph = TradingAgentsGraph(config=cfg, callbacks=[counter], **kwargs)
 
     def analyze(ticker: str, trade_date: str, portfolio) -> tuple[dict, str]:
+        counter.start()
         return graph.propagate(ticker, trade_date, portfolio=portfolio)
 
+    # The runner reads these to log each ticker's calls and tokens.
+    analyze.usage = counter
+    analyze.models = {"provider": cfg.get("llm_provider"), "deep": cfg.get("deep_think_llm"),
+                      "quick": cfg.get("quick_think_llm"), "analysts": analysts or "all"}
     return analyze
 
 
@@ -334,7 +362,19 @@ class Runner:
                     continue
 
                 account = self._account(open_orders)
-                final_state, signal = self.analyze(ticker, trade_date, self.portfolio_builder(account))
+                counter = getattr(self.analyze, "usage", None)
+                if counter is not None:
+                    counter.start()
+                try:
+                    final_state, signal = self.analyze(ticker, trade_date, self.portfolio_builder(account))
+                finally:
+                    # Recorded even when the analysis fails: a rate-limited run still spent tokens.
+                    if counter is not None:
+                        outcome.usage = counter.snapshot()
+                        self.ledger.append("usage", {"trade_date": trade_date, "ticker": ticker,
+                                                     "decision_id": decision_id, "dry_run": self.dry_run,
+                                                     **outcome.usage.as_dict(),
+                                                     **getattr(self.analyze, "models", {})})
                 ai_signal = signal
                 override = rating_override(self.ledger, ticker, trade_date)
                 if override and override != signal:

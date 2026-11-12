@@ -119,7 +119,7 @@ if top[1].button("🔄 刷新"):
 ledger = load_ledger(str(LEDGERS[which]))
 dry = which.startswith("Dry")
 
-tabs = st.tabs(["概览", "评级", "分析报告", "订单与止损", "运行日志", "任务状态"])
+tabs = st.tabs(["概览", "评级", "分析报告", "订单与止损", "运行日志", "Token 用量", "任务状态"])
 
 # 概览 -------------------------------------------------------------------------------
 with tabs[0]:
@@ -156,7 +156,7 @@ with tabs[0]:
                              "占比": h["value"] / acct["equity"], "成本价": h["entry"],
                              "浮动盈亏": h["value"] - cost if h["entry"] else None,
                              "止损价": stops.get(h["ticker"])})
-            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True,
+            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch",
                          column_config={"市值": st.column_config.NumberColumn(format="$%.0f"),
                                         "占比": st.column_config.NumberColumn(format="percent"),
                                         "成本价": st.column_config.NumberColumn(format="$%.2f"),
@@ -199,7 +199,7 @@ with tabs[1]:
             rows.append({"股票": d["ticker"], "评级": f"{d['signal']}（{RATING_ZH.get(d['signal'], '')}）",
                          "AI 原评级": ai or "", "目标仓位": d.get("target_weight"),
                          "止损": d.get("stop_loss"), "操作": action, "理由": summary_of(d.get("thesis", ""))})
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True,
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch",
                      column_config={"目标仓位": st.column_config.NumberColumn(format="percent"),
                                     "理由": st.column_config.TextColumn(width="large")})
 
@@ -208,7 +208,7 @@ with tabs[1]:
         hist = dec.drop_duplicates(["trade_date", "ticker"], keep="last")
         pivot = hist.pivot(index="trade_date", columns="ticker", values="signal").sort_index(ascending=False)
         st.dataframe(pivot.map(lambda s: RATING_ZH.get(s, s) if isinstance(s, str) else ""),
-                     use_container_width=True)
+                     width="stretch")
 
 # 分析报告 ------------------------------------------------------------------------
 with tabs[2]:
@@ -251,20 +251,20 @@ with tabs[3]:
         orders["来源"] = orders.get("source", pd.Series(index=orders.index)).fillna("AI").replace({"manual": "手动"})
         cols = [c for c in ["at", "trade_date", "ticker", "side", "quantity", "status", "est_price",
                             "filled_avg_price", "来源"] if c in orders]
-        st.dataframe(orders[cols].sort_values("at", ascending=False), hide_index=True, use_container_width=True)
+        st.dataframe(orders[cols].sort_values("at", ascending=False), hide_index=True, width="stretch")
     st.subheader("止损变动")
     stops = records(ledger, "stop")
     if stops.empty:
         st.caption("还没有止损记录。")
     else:
         st.dataframe(stops[["at", "ticker", "stop_price", "previous", "source"]].sort_values("at", ascending=False),
-                     hide_index=True, use_container_width=True)
+                     hide_index=True, width="stretch")
     events = pd.concat([records(ledger, k).assign(类型=k) for k in
                         ("stop_filled", "take_profit", "manual", "override", "error")
                         if not records(ledger, k).empty], ignore_index=True) if ledger else pd.DataFrame()
     if not events.empty:
         st.subheader("其他事件（止损成交、止盈、手动操作、评级覆盖、错误）")
-        st.dataframe(events.sort_values("at", ascending=False), hide_index=True, use_container_width=True)
+        st.dataframe(events.sort_values("at", ascending=False), hide_index=True, width="stretch")
 
 # 运行日志 --------------------------------------------------------------------------
 with tabs[4]:
@@ -278,7 +278,8 @@ with tabs[4]:
         text = pick.read_text(encoding="utf-8", errors="replace")
         lines = text.splitlines()
         calls = sum(1 for line in lines if "POST https://api.openai.com" in line)
-        result = [line for line in lines if re.match(r"^(Cycle |  [A-Z.]+ +\S|ledger head|Daily summary)", line)]
+        result = [line for line in lines
+                  if re.match(r"^(Cycle |  [A-Z.]+ +\S|ledger head|Daily summary|usage:)", line)]
         errors = [line for line in lines if " ERROR " in line or line.startswith("Traceback")]
         m = st.columns(3)
         m[0].metric("ChatGPT 调用次数", calls)
@@ -292,13 +293,51 @@ with tabs[4]:
         st.code("\n".join(shown[-3000:]), language=None)
         st.download_button("下载这份日志", text, file_name=pick.name)
 
-# 任务状态 --------------------------------------------------------------------------
+# Token 用量 ------------------------------------------------------------------------
 with tabs[5]:
+    frames = []
+    for label, path in LEDGERS.items():
+        u = records(load_ledger(str(path)), "usage")
+        if not u.empty:
+            frames.append(u.assign(账本="dry run" if label.startswith("Dry") else "正式"))
+    if not frames:
+        st.caption("还没有用量记录：从下一次运行开始，每只股票的调用次数和 token 都会记下来。")
+    else:
+        u = pd.concat(frames, ignore_index=True)
+        u["日期"] = u["at"].dt.strftime("%Y-%m-%d")
+        latest = u[u["日期"] == u["日期"].max()]
+        c = st.columns(4)
+        c[0].metric("最近一天 token", f"{latest['tokens'].sum() / 10_000:.1f} 万")
+        c[1].metric("最近一天调用次数", int(latest["llm_calls"].sum()))
+        c[2].metric("平均每只股票 token", f"{u['tokens'].mean() / 10_000:.1f} 万")
+        c[3].metric("平均每只耗时", f"{u['seconds'].mean() / 60:.1f} 分钟")
+
+        st.subheader("每天的 token 用量")
+        daily = u.groupby(["日期", "账本"])["tokens"].sum().unstack(fill_value=0)
+        st.bar_chart(daily, height=260)
+
+        st.subheader("每只股票的平均用量")
+        per = (u.groupby("ticker").agg(次数=("tokens", "size"), 平均token=("tokens", "mean"),
+                                       最多token=("tokens", "max"), 平均调用=("llm_calls", "mean"),
+                                       平均秒数=("seconds", "mean"))
+               .sort_values("平均token", ascending=False).reset_index().rename(columns={"ticker": "股票"}))
+        st.dataframe(per, hide_index=True, width="stretch",
+                     column_config={"平均token": st.column_config.NumberColumn(format="%.0f"),
+                                    "平均调用": st.column_config.NumberColumn(format="%.1f"),
+                                    "平均秒数": st.column_config.NumberColumn(format="%.0f")})
+
+        st.subheader("明细")
+        cols = [c for c in ["at", "账本", "ticker", "llm_calls", "tokens_in", "tokens_out", "tokens",
+                            "seconds", "deep", "quick", "analysts"] if c in u]
+        st.dataframe(u[cols].sort_values("at", ascending=False), hide_index=True, width="stretch")
+
+# 任务状态 --------------------------------------------------------------------------
+with tabs[6]:
     jobs = scheduled_jobs()
     if jobs.empty:
         st.warning("没有找到定时任务（launchd 里没有 com.tradingengine.*）。")
     else:
-        st.dataframe(jobs, hide_index=True, use_container_width=True)
+        st.dataframe(jobs, hide_index=True, width="stretch")
     ks = kill_switch()
     st.markdown(f"**紧急开关：** {'🛑 打开 — ' + ks if ks else '✅ 关闭'}")
     for name in ("com.tradingengine.commands.log", "commands.log"):
