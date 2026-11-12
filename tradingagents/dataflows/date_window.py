@@ -13,7 +13,15 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+import os
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
+
+# "Today" is the exchange's calendar day, not this machine's. On the US west
+# coast the two differ from 21:00 to midnight local time, when New York is
+# already on the next day; a trade date taken from the market clock (as the
+# trading engine does) was then rejected as "in the future".
+DEFAULT_MARKET_TZ = "America/New_York"
 
 
 def to_utc(dt: datetime) -> datetime:
@@ -32,9 +40,14 @@ def in_window(pub_dt: datetime | None, start_dt: datetime, end_dt: datetime) -> 
     return end >= datetime.now(UTC) - timedelta(days=1)
 
 
+def market_tz() -> ZoneInfo:
+    """The exchange time zone: ``TRADINGAGENTS_MARKET_TZ``, default New York."""
+    return ZoneInfo(os.environ.get("TRADINGAGENTS_MARKET_TZ") or DEFAULT_MARKET_TZ)
+
+
 def get_current_date() -> str:
-    """Today's date, YYYY-MM-DD."""
-    return date.today().strftime("%Y-%m-%d")
+    """Today's date on the exchange's clock, YYYY-MM-DD."""
+    return datetime.now(market_tz()).strftime("%Y-%m-%d")
 
 
 def is_historical(run_date) -> bool:

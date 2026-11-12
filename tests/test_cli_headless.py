@@ -8,6 +8,7 @@ import typer
 
 from cli import prompts, run, selections
 from cli.models import AnalystType, AssetType
+from tradingagents.dataflows.date_window import get_current_date
 
 UNATTENDED_ENV = {
     "TRADINGAGENTS_OUTPUT_LANGUAGE": "English",
@@ -30,7 +31,7 @@ class TestFlagValues:
 
     def test_a_date_must_be_a_past_or_present_day(self):
         assert prompts.parse_analysis_date("2026-09-23") == "2026-09-23"
-        tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
+        tomorrow = (datetime.date.fromisoformat(get_current_date()) + datetime.timedelta(days=1)).isoformat()
         with pytest.raises(ValueError, match="future"):
             prompts.parse_analysis_date(tomorrow)
         with pytest.raises(ValueError, match="YYYY-MM-DD"):

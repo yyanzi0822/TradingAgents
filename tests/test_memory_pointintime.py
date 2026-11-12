@@ -84,12 +84,13 @@ def test_memory_as_of_gates_historical_but_not_live():
     # None so live behavior and legacy entries are unaffected (#1251).
     from datetime import datetime, timedelta
 
+    from tradingagents.dataflows.date_window import get_current_date
     from tradingagents.graph.trading_graph import TradingAgentsGraph
 
     g = object.__new__(TradingAgentsGraph)
     past = "2024-01-01"
-    today = datetime.now().strftime("%Y-%m-%d")
-    future = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
+    today = get_current_date()  # the exchange's day, as the graph uses
+    future = (datetime.fromisoformat(today) + timedelta(days=30)).strftime("%Y-%m-%d")
     assert g._memory_as_of(past) == past       # backtest -> filter on the trade date
     assert g._memory_as_of(today) is None      # live -> no filter
     assert g._memory_as_of(future) is None     # future-dated run -> no filter

@@ -1,6 +1,5 @@
 """The interactive choices for a run: ticker, date, analysts, depth, provider and models."""
 
-import datetime
 import os
 from pathlib import Path
 
@@ -37,6 +36,7 @@ from cli.prompts import (
     select_research_depth,
     select_shallow_thinking_agent,
 )
+from tradingagents.dataflows.date_window import get_current_date
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.llm_clients.factory import REASONING_EFFORT_PROVIDERS
 from tradingagents.llm_clients.openai_client import check_endpoint
@@ -189,7 +189,7 @@ def _prompt_selections(prefs, flags):
         analysis_date = _from_flag(parse_analysis_date, flags["date"])
         console.print(f"[green]✓ Analysis date from --date:[/green] {analysis_date}")
     else:
-        default_date = datetime.datetime.now().strftime("%Y-%m-%d")
+        default_date = get_current_date()
         console.print(
             create_question_box(
                 "Step 2: Analysis Date",
@@ -375,7 +375,7 @@ def get_analysis_date():
     """Get the analysis date from user input."""
     while True:
         date_str = typer.prompt(
-            "", default=datetime.datetime.now().strftime("%Y-%m-%d")
+            "", default=get_current_date()
         )
         try:
             return parse_analysis_date(date_str)

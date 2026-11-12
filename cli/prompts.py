@@ -11,6 +11,7 @@ from rich.markup import escape
 
 from cli.display import console
 from cli.models import AnalystType, AssetType
+from tradingagents.dataflows.date_window import get_current_date
 from tradingagents.dataflows.symbols import safe_ticker_component
 from tradingagents.llm_clients.api_key_env import get_api_key_env
 from tradingagents.llm_clients.model_catalog import get_model_options
@@ -93,7 +94,7 @@ def parse_analysis_date(value: str) -> str:
         day = datetime.datetime.strptime(value.strip(), "%Y-%m-%d").date()
     except ValueError:
         raise ValueError(f"not a date: {value!r}; use YYYY-MM-DD") from None
-    if day > datetime.date.today():
+    if day.isoformat() > get_current_date():
         raise ValueError(f"{value} is in the future")
     return day.isoformat()
 
