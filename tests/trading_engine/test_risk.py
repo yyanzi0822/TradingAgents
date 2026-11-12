@@ -111,7 +111,7 @@ def test_cash_cap():
 
 
 def test_drawdown_breaker_blocks_buys_but_not_sells():
-    acct = account(equity=91_000, cash=86_000, hwm=100_000,
+    acct = account(equity=89_000, cash=84_000, hwm=100_000,
                    holdings={"AAPL": Holding("AAPL", 50, 5_000.0)})
     new_buy = engine().evaluate(intent("JPM", 0.05, stop=99.0), acct, quote("JPM"), now=NOW)
     assert not new_buy.approved and "drawdown" in new_buy.reasons[0]

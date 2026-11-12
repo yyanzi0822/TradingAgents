@@ -33,7 +33,7 @@ class RiskLimits:
     use_trader_stop: bool = True
 
     # Halt new buys once equity is this far below its high-water mark.
-    max_drawdown: float = 0.08
+    max_drawdown: float = 0.10
 
     # Keep a resting stop order at the broker for every position, at the stop
     # the position was sized with. Off = stops only size the trade.
