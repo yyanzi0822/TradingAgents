@@ -377,9 +377,12 @@ border-radius:2px;margin-right:6px;vertical-align:1px}
 text-transform:uppercase;letter-spacing:.06em}.row.head:hover{background:var(--bg)}
 .sort{all:unset;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;font:inherit;color:inherit;
 letter-spacing:inherit;text-transform:inherit}.sort:hover{color:var(--fg)}.sort:focus-visible{outline:2px solid var(--accent);
-outline-offset:3px;border-radius:3px}.sort[data-dir]{color:var(--fg)}.ar{font-size:14px;line-height:1;width:12px;text-align:center;color:var(--muted);opacity:1}.ar::after{content:"↕"}
-.sort:hover .ar{color:var(--fg)}.sort[data-dir] .ar{color:var(--accent);font-weight:700}
-.sort[data-dir=asc] .ar::after{content:"↑"}.sort[data-dir=desc] .ar::after{content:"↓"}
+outline-offset:3px;border-radius:3px}.sort[data-dir]{color:var(--fg)}.ar{display:inline-flex;flex-direction:column;justify-content:center;gap:1px;margin-left:2px}
+.ar::before,.ar::after{content:"";border-left:4px solid transparent;border-right:4px solid transparent;opacity:.45}
+.ar::before{border-bottom:5px solid var(--muted)}.ar::after{border-top:5px solid var(--muted)}
+.sort:hover .ar::before,.sort:hover .ar::after{opacity:.8}
+.sort[data-dir=asc] .ar::before{border-bottom-color:var(--accent);opacity:1}
+.sort[data-dir=desc] .ar::after{border-top-color:var(--accent);opacity:1}
 .row.head .rt.sort{display:flex;flex-direction:row;justify-content:flex-start;box-sizing:border-box;height:auto}
 .msort{display:none;font-size:13px;color:var(--muted);margin-bottom:10px}.msort select{font:inherit;color:var(--fg);
 background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin-left:6px}
