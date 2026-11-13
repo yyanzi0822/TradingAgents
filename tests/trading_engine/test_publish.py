@@ -186,3 +186,15 @@ def test_dimension_scores_are_validated_and_shown(tmp_path):
     index = (site / "index.html").read_text()
     assert 't-sell">Poor' in index and 't-buy">Strong' in index and 't-hold">Mixed' in index
     assert 't-sell">Poor' in (site / "stocks" / "AAA.html").read_text()
+
+
+def test_every_column_can_sort(tmp_path):
+    reports, site = tmp_path / "r", tmp_path / "s"
+    write_state(reports, "AAA", "2026-11-12", "Hold")
+    build(site, [{"day": "2026-11-12", "ticker": "AAA", "rating": "Hold"}], llm=None, reports_dir=reports,
+          closes_fn=lambda *a: {}, today="2026-11-12")
+    index = (site / "index.html").read_text()
+    for key in ("stock", "technical", "fundamentals", "news", "rating"):
+        assert f'data-key="{key}"' in index, key
+    assert 'data-stock="AAA" data-rating="2" data-technical="9"' in index   # no grade sorts last
+    assert "<select>" in index and "rows.sort" in index

@@ -375,8 +375,16 @@ box-shadow:var(--shadow)}.dbar{display:flex;height:10px;border-radius:999px;over
 border-radius:2px;margin-right:6px;vertical-align:1px}
 .row.head{padding:10px 20px;background:var(--bg);font-size:12px;font-weight:600;color:var(--muted);
 text-transform:uppercase;letter-spacing:.06em}.row.head:hover{background:var(--bg)}
+.sort{all:unset;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;font:inherit;color:inherit;
+letter-spacing:inherit;text-transform:inherit}.sort:hover{color:var(--fg)}.sort:focus-visible{outline:2px solid var(--accent);
+outline-offset:3px;border-radius:3px}.sort[data-dir]{color:var(--fg)}.ar{font-size:14px;line-height:1;width:12px;text-align:center;color:var(--muted);opacity:1}.ar::after{content:"↕"}
+.sort:hover .ar{color:var(--fg)}.sort[data-dir] .ar{color:var(--accent);font-weight:700}
+.sort[data-dir=asc] .ar::after{content:"↑"}.sort[data-dir=desc] .ar::after{content:"↓"}
+.row.head .rt.sort{display:flex;flex-direction:row;justify-content:flex-start;box-sizing:border-box;height:auto}
+.msort{display:none;font-size:13px;color:var(--muted);margin-bottom:10px}.msort select{font:inherit;color:var(--fg);
+background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin-left:6px}
 .sec{font-size:12px;color:var(--faint);margin-top:2px}
-.scs{display:grid;grid-template-columns:92px 112px 80px;gap:0 8px;align-items:center}.lbl{display:none}
+.scs{display:grid;grid-template-columns:100px 130px 80px;gap:0 6px;align-items:center}.lbl{display:none}
 .lv{font-weight:400;font-size:13.5px}.note{font-size:12.5px;color:var(--muted);margin:12px 2px 0}
 .ch{display:flex;justify-content:space-between;align-items:baseline;gap:10px}.why{font-size:14.5px;line-height:1.5}
 .rt{font-weight:700;font-size:15px;align-self:stretch;display:flex;flex-direction:column;justify-content:center;
@@ -386,9 +394,12 @@ border-left:1px solid var(--line);border-right:1px solid var(--line);padding-lef
 .group{margin-top:32px}.ghead{display:flex;align-items:center;gap:10px;margin-bottom:10px}
 .ghead .n{font-size:13px;color:var(--faint)}
 .rows{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow)}
-.row{display:grid;grid-template-columns:190px 300px 132px 1fr 16px;gap:6px 18px;align-items:center;padding:16px 20px;
+.row{display:grid;grid-template-columns:170px 328px 150px 1fr 96px;gap:6px 18px;align-items:center;padding:16px 20px;
 color:var(--fg);border-top:1px solid var(--line);transition:background .12s}
-.row:first-child{border-top:0}.row:hover{background:var(--bg);text-decoration:none}.row:hover .chev{color:var(--fg);transform:translateX(2px)}
+.row:first-child{border-top:0}.row:hover{background:color-mix(in srgb,var(--accent) 6%,var(--surface));text-decoration:none}
+.row:hover .tk{color:var(--accent)}.go{font-size:13px;font-weight:600;color:var(--accent);white-space:nowrap;text-align:right}
+.go i{font-style:normal;display:inline-block;transition:transform .12s}.row:hover .go i{transform:translateX(3px)}
+.hint{font-size:13px;color:var(--muted);margin:-6px 0 12px}
 .tk{font-weight:700;font-size:17px;letter-spacing:-.01em}.nm{font-size:13px;color:var(--muted);line-height:1.4;margin-top:2px}
 .why p{margin:4px 0 0;font-size:14.5px;line-height:1.5}
 .chev{color:var(--faint);font-size:18px;transition:transform .12s,color .12s}
@@ -420,7 +431,8 @@ footer .wrap>div{max-width:760px}
 .row .rt{grid-column:2;grid-row:1;text-align:right;border-left:0;border-right:0;padding-left:0;margin:0;background:none}
 .row .rt .lbl{display:block;font-weight:400;margin:0}.row .scs{grid-column:1/3;display:flex;flex-wrap:wrap;gap:6px 16px}
 .row .lbl{display:inline;color:var(--muted);font-size:12px;margin-right:5px}
-.row .why{grid-column:1/3}.row .chev,.row.head{display:none}
+.row .why{grid-column:1/3}.row.head{display:none}.msort{display:block}
+.row .go{grid-column:1/3;text-align:left}.hint{display:none}
 .bar{height:auto;padding-top:12px;padding-bottom:12px;flex-direction:column;align-items:flex-start;gap:8px}nav{max-width:100%}}
 """
 
@@ -465,6 +477,30 @@ def display_name(prof: dict, ticker: str) -> str:
     return "" if name == ticker else name
 
 
+# Click a column header (or pick from the phone menu) to sort; click again to reverse.
+# Lower numbers are better (Buy, Strong); stocks without a grade always go last.
+SORT_JS = """<script>
+document.querySelectorAll('.rows').forEach(function(t){
+  var hs=t.querySelectorAll('.sort'), menu=t.previousElementSibling.querySelector('select');
+  function sort(k,asc){
+    hs.forEach(function(x){x.removeAttribute('data-dir');x.removeAttribute('aria-sort');
+      if(x.dataset.key===k){x.dataset.dir=asc?'asc':'desc';x.setAttribute('aria-sort',asc?'ascending':'descending');}});
+    var rows=Array.prototype.slice.call(t.querySelectorAll('a.row'));
+    rows.sort(function(a,b){
+      var x=a.dataset[k], y=b.dataset[k], c;
+      if(k==='stock'){c=x.localeCompare(y);}else{
+        if(x==='9'||y==='9'){return (x==='9')-(y==='9')||a.dataset.stock.localeCompare(b.dataset.stock);}
+        c=x-y;}
+      return (asc?c:-c)||a.dataset.rating-b.dataset.rating||a.dataset.stock.localeCompare(b.dataset.stock);});
+    rows.forEach(function(r){t.appendChild(r);});
+    if(menu){menu.value=k;}
+  }
+  hs.forEach(function(h){h.addEventListener('click',function(){sort(h.dataset.key,h.dataset.dir!=='asc');});});
+  if(menu){menu.addEventListener('change',function(){sort(menu.value,true);});}
+});
+</script>"""
+
+
 def trend(rating: str, prev: str | None) -> str:
     """Arrow against the previous day's rating: up if it improved toward Buy, down if it fell; nothing without one."""
     if not prev or prev not in RATING_ORDER:
@@ -492,16 +528,28 @@ def day_body(day: str, calls: list[Call], previous: dict[str, str], depth: int,
         scores = c.points.get("scores") or {}
         cells = "".join(f'<div class="sc"><span class="lbl">{label}</span>{level_tag(scores.get(key))}</div>'
                         for key, label in DIMENSIONS)
-        rows.append(f'<a class="row" href="{up}stocks/{esc(c.ticker)}.html">'
+        rank = {key: LEVELS.index(scores[key]) if scores.get(key) in LEVELS else 9 for key, _ in DIMENSIONS}
+        data = (f'data-stock="{esc(c.ticker)}" data-rating="{RATING_ORDER.get(c.rating, 9)}" '
+                + " ".join(f'data-{key}="{v}"' for key, v in rank.items()))
+        rows.append(f'<a class="row" {data} href="{up}stocks/{esc(c.ticker)}.html">'
                     f'<div><div class="tk">{esc(c.ticker)}</div><div class="nm">{esc(display_name(prof, c.ticker))}'
                     f'</div><div class="sec">{esc(prof.get("sector", ""))}</div></div>'
                     f'<div class="scs">{cells}</div>'
                     f'<div class="rt t-{RATING_CLASS[c.rating]}"><span class="lbl">Final rating</span>'
                     f'{esc(c.rating)}{chg}</div>'
-                    f'<div class="why">{esc(c.points.get("headline"))}</div><span class="chev">→</span></a>')
-    table = (f'<div class="rows"><div class="row head"><div>Stock</div><div class="scs">'
-             f'<div>Technical</div><div>Fundamentals</div><div>News</div></div><div class="rt">Final rating</div>'
-             f'<div>Summary</div><span></span></div>{"".join(rows)}</div>'
+                    f'<div class="why">{esc(c.points.get("headline"))}</div><span class="go">Full report <i>→</i></span></a>')
+    def sorter(key: str, label: str, cls: str = "", on: bool = False) -> str:
+        state = ' data-dir="asc" aria-sort="ascending"' if on else ""
+        return f'<button type="button" class="sort {cls}" data-key="{key}"{state}>{label}<span class="ar"></span></button>'
+
+    options = "".join(f'<option value="{k}">{lbl}</option>' for k, lbl in
+                      (("rating", "Final rating"), ("technical", "Technical"), ("fundamentals", "Fundamentals"),
+                       ("news", "News"), ("stock", "Stock A–Z")))
+    table = (f'<label class="msort">Sort by <select>{options}</select></label>'
+             f'<div class="rows"><div class="row head">{sorter("stock", "Stock")}<div class="scs">'
+             f'{sorter("technical", "Technical")}{sorter("fundamentals", "Fundamentals")}{sorter("news", "News")}'
+             f'</div>{sorter("rating", "Final rating", "rt", on=True)}'
+             f'<div>Summary</div><span></span></div>{"".join(rows)}</div>{SORT_JS}'
              f'<p class="note">Technical, Fundamentals and News are graded separately by the AI on a five-step '
              f'scale: {" · ".join(level_tag(lv) for lv in LEVELS)}.</p>')
     d = datetime.strptime(day, "%Y-%m-%d")
@@ -509,7 +557,8 @@ def day_body(day: str, calls: list[Call], previous: dict[str, str], depth: int,
             f'<p class="lede">AI ratings for {len(calls)} US stocks, ranked from Buy to Sell. '
             f'<a href="{up}about.html">How it works</a></p>'
             f'<div class="dist"><div class="dbar">{segs}</div><div class="legend">{legend}</div></div>'
-            f'<h2>All ratings · Buy to Sell</h2>{table}')
+            f'<h2>All ratings</h2><p class="hint">Click a row for the full report · '
+            f'click a column header to sort</p>{table}')
 
 
 def stock_body(ticker: str, latest: Call, history: list[dict], results: dict,
