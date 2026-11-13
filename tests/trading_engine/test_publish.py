@@ -166,6 +166,7 @@ def test_trend_arrow_against_the_previous_day():
     assert publish.trend("Hold", None) == ""                       # no earlier rating: nothing
     assert "▲ from Sell" in publish.trend("Hold", "Sell")
     assert "▼ from Buy" in publish.trend("Overweight", "Buy")
+    assert "▲ from Moderate Sell" in publish.trend("Hold", "Underweight")
     assert "unchanged" in publish.trend("Sell", "Sell")
 
 
@@ -198,3 +199,10 @@ def test_every_column_can_sort(tmp_path):
         assert f'data-key="{key}"' in index, key
     assert 'data-stock="AAA" data-rating="2" data-technical="9"' in index   # no grade sorts last
     assert "<select>" in index and "rows.sort" in index
+
+
+def test_public_labels_replace_broker_jargon():
+    assert publish.label("Overweight") == "Moderate Buy" and publish.label("Underweight") == "Moderate Sell"
+    assert publish.label("Buy") == "Buy"
+    assert publish.plain("CRDO is rated Overweight as growth holds.") == "CRDO is rated Moderate Buy as growth holds."
+    assert "Moderate Sell" in publish.badge("Underweight")

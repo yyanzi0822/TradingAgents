@@ -35,6 +35,19 @@ SITE_NAME = "AI Stock Daily"
 HORIZON_DAYS = 5
 BULLISH, BEARISH = {"Buy", "Overweight"}, {"Underweight", "Sell"}
 RATING_CLASS = {"Buy": "buy", "Overweight": "ow", "Hold": "hold", "Underweight": "uw", "Sell": "sell"}
+# Public wording: the engine's Overweight/Underweight are broker jargon, so readers see these instead.
+LABELS = {"Overweight": "Moderate Buy", "Underweight": "Moderate Sell"}
+_JARGON = re.compile(r"\b(Overweight|Underweight)\b")
+
+
+def label(rating: str) -> str:
+    return LABELS.get(rating, rating)
+
+
+def plain(text: str) -> str:
+    """Swap the jargon in model-written text ("rated Overweight") for the public labels."""
+    return _JARGON.sub(lambda m: LABELS[m.group(1)], str(text or ""))
+
 RATING_ORDER = {r: i for i, r in enumerate(RATING_CLASS)}         # Buy first, Sell last
 UNIVERSE_FILE = Path(__file__).with_name("universe.json")
 
@@ -312,8 +325,8 @@ def forward_returns(ratings: list[dict], closes: dict[str, dict[str, float]],
 
 def scorecard(results: list[dict]) -> list[dict]:
     rows = []
-    for name, group in (("Bullish (Buy, Overweight)", BULLISH), ("Hold", {"Hold"}),
-                        ("Bearish (Underweight, Sell)", BEARISH)):
+    for name, group in (("Bullish (Buy, Moderate Buy)", BULLISH), ("Hold", {"Hold"}),
+                        ("Bearish (Moderate Sell, Sell)", BEARISH)):
         xs = [r for r in results if r["rating"] in group]
         if not xs:
             continue
@@ -448,7 +461,7 @@ def esc(s) -> str:
 
 
 def badge(rating: str) -> str:
-    return f'<span class="pill p-{RATING_CLASS.get(rating, "hold")}">{esc(rating)}</span>'
+    return f'<span class="pill p-{RATING_CLASS.get(rating, "hold")}">{esc(label(rating))}</span>'
 
 
 def page(title: str, body: str, depth: int = 0) -> str:
@@ -468,7 +481,7 @@ def page(title: str, body: str, depth: int = 0) -> str:
 
 
 def bullets(items: list[str]) -> str:
-    return "<ul>" + "".join(f"<li>{esc(i)}</li>" for i in items) + "</ul>" if items else '<p class="muted">—</p>'
+    return "<ul>" + "".join(f"<li>{esc(plain(i))}</li>" for i in items) + "</ul>" if items else '<p class="muted">—</p>'
 
 
 def by_rating(calls: list[Call]) -> list[Call]:
@@ -510,9 +523,9 @@ def trend(rating: str, prev: str | None) -> str:
         return ""
     move = RATING_ORDER[prev] - RATING_ORDER.get(rating, RATING_ORDER[prev])
     if move > 0:
-        return f'<div class="chg up" title="Up from {esc(prev)}">▲ from {esc(prev)}</div>'
+        return f'<div class="chg up" title="Up from {esc(label(prev))}">▲ from {esc(label(prev))}</div>'
     if move < 0:
-        return f'<div class="chg down" title="Down from {esc(prev)}">▼ from {esc(prev)}</div>'
+        return f'<div class="chg down" title="Down from {esc(label(prev))}">▼ from {esc(label(prev))}</div>'
     return '<div class="chg" title="Same as the previous day">– unchanged</div>'
 
 
@@ -522,7 +535,7 @@ def day_body(day: str, calls: list[Call], previous: dict[str, str], depth: int,
     up, profiles = "../" * depth, profiles or {}
     counts = {r: sum(c.rating == r for c in calls) for r in RATING_CLASS}
     segs = "".join(f'<span class="b-{RATING_CLASS[r]}" style="flex:{n}"></span>' for r, n in counts.items() if n)
-    legend = "".join(f'<span><i class="b-{RATING_CLASS[r]}"></i>{r}<b>{n}</b></span>' for r, n in counts.items())
+    legend = "".join(f'<span><i class="b-{RATING_CLASS[r]}"></i>{label(r)}<b>{n}</b></span>' for r, n in counts.items())
     rows = []
     for c in by_rating(calls):
         prof = profiles.get(c.ticker, {})
@@ -539,8 +552,8 @@ def day_body(day: str, calls: list[Call], previous: dict[str, str], depth: int,
                     f'</div><div class="sec">{esc(prof.get("sector", ""))}</div></div>'
                     f'<div class="scs">{cells}</div>'
                     f'<div class="rt t-{RATING_CLASS[c.rating]}"><span class="lbl">Final rating</span>'
-                    f'{esc(c.rating)}{chg}</div>'
-                    f'<div class="why">{esc(c.points.get("headline"))}</div><span class="go">Full report <i>→</i></span></a>')
+                    f'{esc(label(c.rating))}{chg}</div>'
+                    f'<div class="why">{esc(plain(c.points.get("headline")))}</div><span class="go">Full report <i>→</i></span></a>')
     def sorter(key: str, label: str, cls: str = "", on: bool = False) -> str:
         state = ' data-dir="asc" aria-sort="ascending"' if on else ""
         return f'<button type="button" class="sort {cls}" data-key="{key}"{state}>{label}<span class="ar"></span></button>'
@@ -591,7 +604,7 @@ def stock_body(ticker: str, latest: Call, history: list[dict], results: dict,
             f'<h1>{esc(ticker)} {badge(latest.rating)}</h1>'
             f'<div class="nm">{esc(display_name(prof, ticker))}</div></div>'
             f'<div class="asof">Brief for {latest.day}</div></div>'
-            f'<div class="view v-{cls}"><p class="eyebrow">Today’s view</p><p>{esc(p.get("headline"))}</p></div>'
+            f'<div class="view v-{cls}"><p class="eyebrow">Today’s view</p><p>{esc(plain(p.get("headline")))}</p></div>'
             f'{about}<h2>The analysis</h2><div class="grid3">{card("Technical", "technical")}'
             f'{card("Fundamentals", "fundamentals")}{card("News &amp; macro", "news")}</div>'
             f'<div class="grid2">{card("Bull case", "bull", "bull")}{card("Bear case", "bear", "bear")}</div>'
@@ -627,7 +640,7 @@ ABOUT = f"""<div class="prose"><p class="eyebrow">About</p><h1>How {SITE_NAME} w
 <p>{SITE_NAME} publishes one brief per stock each US trading day. A team of AI agents reads price data and
 technical indicators, company filings and financial statements, and recent news and macro data. Bull and bear
 researchers argue the case, a trader drafts a plan, risk reviewers challenge it, and a portfolio-manager agent
-gives the final five-level rating: Buy, Overweight, Hold, Underweight or Sell.</p>
+gives the final five-level rating: Buy, Moderate Buy, Hold, Moderate Sell or Sell.</p>
 <p>The research uses the open-source TradingAgents framework. Briefs are generated automatically and are not
 reviewed by a person before publishing. Every rating is scored on the Track record page so you can judge
 how useful it has been.</p></div>"""
