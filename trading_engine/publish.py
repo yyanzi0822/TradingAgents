@@ -379,12 +379,14 @@ text-transform:uppercase;letter-spacing:.06em}.row.head:hover{background:var(--b
 .scs{display:grid;grid-template-columns:92px 112px 80px;gap:0 8px;align-items:center}.lbl{display:none}
 .lv{font-weight:400;font-size:13.5px}.note{font-size:12.5px;color:var(--muted);margin:12px 2px 0}
 .ch{display:flex;justify-content:space-between;align-items:baseline;gap:10px}.why{font-size:14.5px;line-height:1.5}
-.rt{font-weight:400;font-size:15px}.rt .chg{font-weight:400;font-size:12px;margin-top:2px}.chg.up{color:var(--buy)}.chg.down{color:var(--sell)}.t-buy{color:var(--buy)}.t-ow{color:var(--ow)}
+.rt{font-weight:700;font-size:15px;align-self:stretch;display:flex;flex-direction:column;justify-content:center;
+border-left:1px solid var(--line);border-right:1px solid var(--line);padding-left:16px;margin:-16px 0;background:color-mix(in srgb,var(--line) 22%,transparent)}
+.row.head .rt{margin:-10px 0;color:var(--fg)}.rt .chg{font-weight:500;font-size:12px;margin-top:2px}.chg.up{color:var(--buy)}.chg.down{color:var(--sell)}.t-buy{color:var(--buy)}.t-ow{color:var(--ow)}
 .t-hold{color:var(--hold)}.t-uw{color:var(--uw)}.t-sell{color:var(--sell)}
 .group{margin-top:32px}.ghead{display:flex;align-items:center;gap:10px;margin-bottom:10px}
 .ghead .n{font-size:13px;color:var(--faint)}
 .rows{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow)}
-.row{display:grid;grid-template-columns:190px 112px 300px 1fr 16px;gap:6px 18px;align-items:center;padding:16px 20px;
+.row{display:grid;grid-template-columns:190px 300px 132px 1fr 16px;gap:6px 18px;align-items:center;padding:16px 20px;
 color:var(--fg);border-top:1px solid var(--line);transition:background .12s}
 .row:first-child{border-top:0}.row:hover{background:var(--bg);text-decoration:none}.row:hover .chev{color:var(--fg);transform:translateX(2px)}
 .tk{font-weight:700;font-size:17px;letter-spacing:-.01em}.nm{font-size:13px;color:var(--muted);line-height:1.4;margin-top:2px}
@@ -415,7 +417,8 @@ footer .wrap>div{max-width:760px}
 @media (max-width:820px){.grid3{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}}
 @media (max-width:640px){h1{font-size:28px}.shead h1{font-size:32px}main{padding-top:28px}
 .row{grid-template-columns:1fr auto;padding:14px 16px;gap:8px 12px}
-.row .rt{grid-column:2;grid-row:1;text-align:right}.row .scs{grid-column:1/3;display:flex;flex-wrap:wrap;gap:6px 16px}
+.row .rt{grid-column:2;grid-row:1;text-align:right;border-left:0;border-right:0;padding-left:0;margin:0;background:none}
+.row .rt .lbl{display:block;font-weight:400;margin:0}.row .scs{grid-column:1/3;display:flex;flex-wrap:wrap;gap:6px 16px}
 .row .lbl{display:inline;color:var(--muted);font-size:12px;margin-right:5px}
 .row .why{grid-column:1/3}.row .chev,.row.head{display:none}
 .bar{height:auto;padding-top:12px;padding-bottom:12px;flex-direction:column;align-items:flex-start;gap:8px}nav{max-width:100%}}
@@ -492,11 +495,12 @@ def day_body(day: str, calls: list[Call], previous: dict[str, str], depth: int,
         rows.append(f'<a class="row" href="{up}stocks/{esc(c.ticker)}.html">'
                     f'<div><div class="tk">{esc(c.ticker)}</div><div class="nm">{esc(display_name(prof, c.ticker))}'
                     f'</div><div class="sec">{esc(prof.get("sector", ""))}</div></div>'
-                    f'<div class="rt t-{RATING_CLASS[c.rating]}">{esc(c.rating)}{chg}</div>'
                     f'<div class="scs">{cells}</div>'
+                    f'<div class="rt t-{RATING_CLASS[c.rating]}"><span class="lbl">Final rating</span>'
+                    f'{esc(c.rating)}{chg}</div>'
                     f'<div class="why">{esc(c.points.get("headline"))}</div><span class="chev">→</span></a>')
-    table = (f'<div class="rows"><div class="row head"><div>Stock</div><div>Rating</div><div class="scs">'
-             f'<div>Technical</div><div>Fundamentals</div><div>News</div></div>'
+    table = (f'<div class="rows"><div class="row head"><div>Stock</div><div class="scs">'
+             f'<div>Technical</div><div>Fundamentals</div><div>News</div></div><div class="rt">Final rating</div>'
              f'<div>Summary</div><span></span></div>{"".join(rows)}</div>'
              f'<p class="note">Technical, Fundamentals and News are graded separately by the AI on a five-step '
              f'scale: {" · ".join(level_tag(lv) for lv in LEVELS)}.</p>')
