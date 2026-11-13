@@ -1,4 +1,4 @@
-"""AI Stock Daily: a public static site with each day's ratings and key points.
+"""Stocks Daily: a public static site with each day's ratings and key points.
 
     python -m trading_engine.publish --site ~/dev/ai-stock-daily            # build
     python -m trading_engine.publish --site ~/dev/ai-stock-daily --push     # build, commit, push
@@ -31,7 +31,16 @@ logger = logging.getLogger(__name__)
 
 DATA_DIR = Path(os.environ.get("TRADING_ENGINE_DIR", Path.home() / ".trading_engine"))
 REPORTS_DIR = Path.home() / ".tradingagents" / "logs"
-SITE_NAME = "AI Stock Daily"
+SITE_NAME = "Stocks Daily"
+# The wordmark, inline so it follows light and dark mode (the text takes the page color).
+LOGO = ('<svg class="logo" viewBox="0 0 420 88" role="img" aria-label="Stocks Daily" xmlns="http://www.w3.org/2000/svg">'
+        '<g fill="currentColor" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="700" '
+        'letter-spacing="-2"><text x="5" y="61">Stocks</text><text x="238" y="61">Daily</text></g>'
+        '<path d="m192 50 11-11 8 5 14-16" fill="none" stroke="#00C853" stroke-width="5" stroke-linecap="round" '
+        'stroke-linejoin="round"/></svg>')
+FAVICON = ("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' "
+           "height='32' rx='7' fill='%23121713'/%3E%3Cpath d='m6 21 6-6 5 3 9-10' fill='none' stroke='%2300C853' "
+           "stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
 HORIZON_DAYS = 5
 BULLISH, BEARISH = {"Buy", "Overweight"}, {"Underweight", "Sell"}
 RATING_CLASS = {"Buy": "buy", "Overweight": "ow", "Hold": "hold", "Underweight": "uw", "Sell": "sell"}
@@ -211,12 +220,6 @@ def dimension_scores(state: dict, ticker: str, llm: Callable[[str], str] | None)
     return out
 
 
-def level_tag(level: str | None) -> str:
-    if not level:
-        return '<span class="lv muted">—</span>'
-    return f'<span class="lv t-{LEVEL_CLASS[level]}">{esc(level)}</span>'
-
-
 def make_llm() -> Callable[[str], str]:
     from tradingagents.default_config import DEFAULT_CONFIG
     from tradingagents.llm_clients.factory import create_tier_client
@@ -340,6 +343,142 @@ def scorecard(results: list[dict]) -> list[dict]:
 
 # --- render ---------------------------------------------------------------------------
 
+# --- language ---------------------------------------------------------------------------
+# English lives at the site root and Chinese under zh/, page for page; the header links the two.
+
+LANGS = ("en", "zh")
+ZH_LABELS = {"Buy": "买入", "Overweight": "增持", "Hold": "持有", "Underweight": "减持", "Sell": "卖出"}
+ZH_LEVELS = {"Strong": "强", "Good": "好", "Mixed": "中性", "Weak": "弱", "Poor": "差"}
+ZH_SECTORS = {"Information Technology": "信息技术", "Industrials": "工业", "Communication Services": "通信服务",
+              "Health Care": "医疗保健", "Financials": "金融", "Consumer Discretionary": "可选消费",
+              "Consumer Staples": "日常消费", "Energy": "能源", "Materials": "原材料", "Utilities": "公用事业",
+              "Real Estate": "房地产"}
+ZH_WEEKDAYS = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
+
+DISCLAIMER_ZH = ("本网站内容由 AI 生成，仅供学习和参考，不构成投资建议，不是买卖任何证券的推荐，也没有考虑任何人的具体情况。"
+                 "分析可能有误、不完整或已经过时。请自行研究；过往表现不代表未来收益。")
+
+STR = {
+    "en": {
+        "Today": "Today", "Archive": "Archive", "Track record": "Track record", "About": "About",
+        "disclaimer": "Disclaimer.", "daily": "Daily brief", "lede": "AI ratings for {n} US stocks, ranked from Buy to Sell.",
+        "how": "How it works", "all": "All ratings",
+        "hint": "Click a row for the full report · click a column header to sort", "sort_by": "Sort by",
+        "stock": "Stock", "technical": "Technical", "fundamentals": "Fundamentals", "news": "News",
+        "rating": "Final rating", "summary": "Summary", "stock_az": "Stock A–Z", "report": "Full report",
+        "note": "Technical, Fundamentals and News are graded separately by the AI on a five-step scale: {scale}.",
+        "up": "▲ from {r}", "down": "▼ from {r}", "same": "– unchanged", "back": "← Today’s ratings",
+        "brief_for": "Brief for {d}", "view": "Today’s view", "company": "About the company",
+        "analysis": "The analysis", "news_card": "News &amp; macro", "bull": "Bull case", "bear": "Bear case",
+        "watch": "What would change the view", "history": "Rating history", "date": "Date", "rating_col": "Rating",
+        "ret": "{n}-day return", "vs": "vs S&amp;P 500", "pending": "pending",
+        "archive_h1": "Every daily brief", "by_date": "By date",
+        "track_empty": ("Each rating is scored by the stock's return over the next {n} trading days, against the "
+                        "S&amp;P 500 (SPY). The first scores appear {n} trading days after the first published ratings."),
+        "track_note": ("Return from the close on the rating day to the close {n} trading days later; “vs S&amp;P 500” "
+                       "subtracts SPY over the same days. “Right” means a bullish call beat SPY or a bearish call "
+                       "lagged it. Small samples are noisy."),
+        "ratings": "Ratings", "calls": "Calls", "avg_ret": "Avg return", "avg_vs": "Avg vs S&amp;P 500", "right": "Right",
+        "recent": "Recent scored calls", "return": "Return",
+        "Bullish (Buy, Moderate Buy)": "Bullish (Buy, Moderate Buy)", "Hold": "Hold",
+        "Bearish (Moderate Sell, Sell)": "Bearish (Moderate Sell, Sell)",
+    },
+    "zh": {
+        "Today": "今日", "Archive": "历史", "Track record": "战绩", "About": "关于",
+        "disclaimer": "免责声明：", "daily": "每日简报", "lede": "AI 对 {n} 只美股的评级，从买入到卖出排序。",
+        "how": "分析方法", "all": "全部评级",
+        "hint": "点击任意一行查看完整报告 · 点击表头排序", "sort_by": "排序方式",
+        "stock": "股票", "technical": "技术面", "fundamentals": "基本面", "news": "新闻面",
+        "rating": "最终评级", "summary": "结论", "stock_az": "股票代码 A–Z", "report": "完整报告",
+        "note": "技术面、基本面和新闻面由 AI 分别打分，共五档：{scale}。",
+        "up": "▲ 由{r}上调", "down": "▼ 由{r}下调", "same": "– 维持", "back": "← 今日评级",
+        "brief_for": "{d} 简报", "view": "今日观点", "company": "公司简介",
+        "analysis": "分析详情", "news_card": "新闻与宏观", "bull": "看多理由", "bear": "看空理由",
+        "watch": "什么情况会改变看法", "history": "历史评级", "date": "日期", "rating_col": "评级",
+        "ret": "{n} 日涨跌", "vs": "相对标普 500", "pending": "待定",
+        "archive_h1": "所有每日简报", "by_date": "按日期",
+        "track_empty": ("每个评级都按之后 {n} 个交易日的涨跌来打分，并和标普 500（SPY）比较。"
+                        "第一批分数会在首次发布评级 {n} 个交易日后出现。"),
+        "track_note": ("从评级当天收盘到 {n} 个交易日后收盘的涨跌；“相对标普 500”是减去同期 SPY 的涨跌。"
+                       "“正确”指看多的评级跑赢 SPY，或看空的评级跑输 SPY。样本少时结果波动大。"),
+        "ratings": "评级", "calls": "次数", "avg_ret": "平均涨跌", "avg_vs": "平均相对标普 500", "right": "正确率",
+        "recent": "最近已打分的评级", "return": "涨跌",
+        "Bullish (Buy, Moderate Buy)": "看多（买入、增持）", "Hold": "持有",
+        "Bearish (Moderate Sell, Sell)": "看空（减持、卖出）",
+    },
+}
+
+
+def tr(lang: str, key: str, **kw) -> str:
+    s = STR[lang].get(key, STR["en"].get(key, key))
+    return s.format(**kw) if kw else s
+
+
+def rating_word(rating: str, lang: str = "en") -> str:
+    return ZH_LABELS.get(rating, rating) if lang == "zh" else label(rating)
+
+
+def level_word(level: str, lang: str = "en") -> str:
+    return ZH_LEVELS.get(level, level) if lang == "zh" else level
+
+
+def sector_word(sector: str, lang: str = "en") -> str:
+    return ZH_SECTORS.get(sector, sector) if lang == "zh" else sector
+
+
+def nice_date(day: str, lang: str = "en") -> tuple[str, str]:
+    d = datetime.strptime(day, "%Y-%m-%d")
+    if lang == "zh":
+        return ZH_WEEKDAYS[d.weekday()], f"{d.year}年{d.month}月{d.day}日"
+    return d.strftime("%A"), d.strftime("%B %-d, %Y")
+
+
+TRANSLATE_PROMPT = """Translate the string values in this JSON into natural Simplified Chinese for a stock research
+website. Keep the keys and the structure exactly. Keep tickers, company names, numbers, dates and units as they are.
+Use these rating words: Buy = 买入, Overweight or Moderate Buy = 增持, Hold = 持有, Underweight or Moderate Sell = 减持,
+Sell = 卖出. Return only the JSON.
+
+{payload}"""
+
+
+def translate_zh(obj: dict, llm: Callable[[str], str] | None) -> dict | None:
+    """The same dict with every string in Chinese; None if there is no model or the answer does not fit."""
+    if llm is None or not obj:
+        return None
+    try:
+        raw = llm(TRANSLATE_PROMPT.format(payload=json.dumps(obj, ensure_ascii=False, indent=1)))
+        m = re.search(r"\{.*\}", raw, re.S)
+        got = json.loads(m.group(0)) if m else None
+    except Exception as exc:  # noqa: BLE001 - the Chinese page falls back to English text
+        logger.warning("translation failed: %s", type(exc).__name__)
+        return None
+    if not isinstance(got, dict):
+        return None
+    out: dict = {}
+    for key, value in obj.items():
+        new = got.get(key)
+        if isinstance(value, str) and isinstance(new, str) and new.strip():
+            out[key] = new.strip()
+        elif isinstance(value, list) and isinstance(new, list) and all(isinstance(x, str) for x in new):
+            out[key] = new[:len(value)]
+    return out or None
+
+
+def zh_text(points: dict, key: str, lang: str):
+    """Chinese model text when there is a translation, else the English (with public rating words)."""
+    if lang == "zh":
+        zh = (points.get("zh") or {}).get(key)
+        if zh:
+            return zh
+    value = points.get(key)
+    if isinstance(value, list):
+        return [plain(v) for v in value]
+    return plain(value)
+
+
+PUBLIC_KEYS = ("headline", "technical", "fundamentals", "news", "bull", "bear", "watch")
+
+
 CSS = """
 :root{--bg:#ffffff;--surface:#ffffff;--secondary:#f5f5f5;--fg:#0a0a0a;--muted:#737373;--faint:#a3a3a3;
 --line:#e5e5e5;--input:#e5e5e5;--ring:#a3a3a3;--accent:#0a0a0a;--radius:10px;
@@ -351,17 +490,21 @@ CSS = """
 --buy:#4ade80;--ow:#8fbf7a;--hold:#d4d4d4;--hold-bar:#737373;--uw:#fbbf24;--sell:#f87171;--shadow:none;--shadow-xs:none}}
 *{box-sizing:border-box;border-color:var(--line)}html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 Geist,ui-sans-serif,system-ui,-apple-system,
-"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;font-feature-settings:"rlig" 1,"calt" 1}
+"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased;font-feature-settings:"rlig" 1,"calt" 1}
 ::selection{background:var(--fg);color:var(--bg)}
 a{color:var(--fg);text-decoration:underline;text-underline-offset:4px;text-decoration-color:var(--line)}
 a:hover{text-decoration-color:var(--fg)}
+.right{display:flex;align-items:center;gap:12px;min-width:0}
+.lang{display:inline-flex;border:1px solid var(--input);border-radius:8px;padding:2px;gap:2px;box-shadow:var(--shadow-xs);flex:none}
+.lang a{font-size:12.5px;font-weight:500;color:var(--muted);text-decoration:none;padding:3px 9px;border-radius:6px}
+.lang a:hover{color:var(--fg)}.lang a.on{background:var(--secondary);color:var(--fg)}
+.stack{display:grid;gap:16px}h2+.stack{margin-top:16px}
 .wrap{max-width:1180px;margin:0 auto;padding:0 24px}
 .top{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--bg) 92%,transparent);
 backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
 .bar{display:flex;align-items:center;justify-content:space-between;gap:16px;height:56px}
 .brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:15px;color:var(--fg);text-decoration:none}
-.logo{width:24px;height:24px;border-radius:6px;background:var(--fg);color:var(--bg);display:grid;place-items:center;
-font-size:10.5px;font-weight:700;letter-spacing:.02em}
+.logo{height:22px;width:auto;display:block;color:var(--fg)}
 nav{display:flex;gap:2px;overflow-x:auto}nav a{color:var(--muted);font-weight:500;font-size:14px;padding:6px 12px;
 border-radius:8px;white-space:nowrap;text-decoration:none;transition:color .15s,background .15s}
 nav a:hover{color:var(--fg);background:var(--secondary)}nav a.on{color:var(--fg);background:var(--secondary)}
@@ -454,39 +597,67 @@ footer .wrap>div{max-width:760px}
 .row .lbl{display:inline;color:var(--muted);font-size:12px;margin-right:5px}
 .row .why{grid-column:1/3}.row.head{display:none}.msort{display:block}
 .row .go{grid-column:1/3;text-align:left}.hint{display:none}
-.bar{height:auto;padding-top:12px;padding-bottom:12px;flex-direction:column;align-items:flex-start;gap:8px}nav{max-width:100%;margin-left:-12px}}
+.bar{height:auto;padding-top:12px;padding-bottom:12px;flex-direction:column;align-items:flex-start;gap:8px}nav{max-width:100%;margin-left:-12px}.right{width:100%;justify-content:space-between}}
 """
 
-NAV = [("Today", "index.html"), ("Archive", "archive.html"), ("Track record", "performance.html"),
-       ("About", "about.html")]
+NAV = ("Today", "index.html"), ("Archive", "archive.html"), ("Track record", "performance.html"), ("About", "about.html")
+
+# Remember the reader's language; a Chinese browser lands on the Chinese pages the first time.
+LANG_JS = """<script>
+(function(){try{var cur=document.documentElement.lang.indexOf('zh')===0?'zh':'en',
+s=localStorage.getItem('lang'),want=s||(cur==='en'&&(navigator.language||'').toLowerCase().indexOf('zh')===0?'zh':cur),
+alt=document.querySelector('link[rel=alternate][hreflang]');
+document.querySelectorAll('.lang a').forEach(function(a){a.addEventListener('click',function(){
+try{localStorage.setItem('lang',a.dataset.lang);}catch(e){}});});
+if(want!==cur&&alt&&!sessionStorage.getItem('langHop')){sessionStorage.setItem('langHop','1');location.replace(alt.href);}
+}catch(e){}})();
+</script>"""
 
 
 def esc(s) -> str:
     return html.escape(str(s if s is not None else ""))
 
 
-def badge(rating: str) -> str:
-    return f'<span class="pill p-{RATING_CLASS.get(rating, "hold")}">{esc(label(rating))}</span>'
+def badge(rating: str, lang: str = "en") -> str:
+    return f'<span class="pill p-{RATING_CLASS.get(rating, "hold")}">{esc(rating_word(rating, lang))}</span>'
 
 
-def page(title: str, body: str, depth: int = 0) -> str:
+def level_tag(level: str | None, lang: str = "en") -> str:
+    if not level:
+        return '<span class="lv muted">—</span>'
+    return f'<span class="lv t-{LEVEL_CLASS[level]}">{esc(level_word(level, lang))}</span>'
+
+
+def page(title: str, body: str, depth: int = 0, lang: str = "en", rel: str = "index.html") -> str:
+    """One page. `depth` counts folders below this language's root; `rel` is the page's path from that root."""
     up = "../" * depth
-    nav = "".join(f'<a href="{up}{href}"{" class=on" if name == title else ""}>{name}</a>' for name, href in NAV)
-    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+    site_root = up + ("../" if lang == "zh" else "")
+    other = "en" if lang == "zh" else "zh"
+    alt = site_root + ("" if other == "en" else "zh/") + rel
+    nav = "".join(f'<a href="{up}{href}"{" class=on" if name == title else ""}>{tr(lang, name)}</a>'
+                  for name, href in NAV)
+    switch = (f'<div class="lang"><a data-lang="en" href="{alt if lang == "zh" else up + rel}"'
+              f'{" class=on" if lang == "en" else ""}>EN</a><a data-lang="zh" href="{alt if lang == "en" else up + rel}"'
+              f'{" class=on" if lang == "zh" else ""}>中文</a></div>')
+    disclaimer = DISCLAIMER_ZH if lang == "zh" else DISCLAIMER
+    shown = tr(lang, title) if title in STR["en"] else title
+    return f"""<!doctype html><html lang="{'zh-CN' if lang == 'zh' else 'en'}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{esc(title)} · {SITE_NAME}</title><meta name="description" content="Daily AI equity research briefs.">
+<title>{esc(shown)} · {SITE_NAME}</title><meta name="description" content="Daily AI equity research briefs.">
+<link rel="icon" href="{FAVICON}">
+<link rel="alternate" hreflang="{'en' if lang == 'zh' else 'zh-CN'}" href="{alt}">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>{CSS}</style></head><body>
-<header class="top"><div class="wrap bar"><a class="brand" href="{up}index.html"><span class="logo">AI</span>{SITE_NAME}</a>
-<nav>{nav}</nav></div></header>
+<style>{CSS}</style>{LANG_JS}</head><body>
+<header class="top"><div class="wrap bar"><a class="brand" href="{up}index.html">{LOGO}</a>
+<div class="right"><nav>{nav}</nav>{switch}</div></div></header>
 <main class="wrap">{body}</main>
-<footer><div class="wrap"><div><strong>Disclaimer.</strong> {esc(DISCLAIMER)}</div></div></footer>
+<footer><div class="wrap"><div><strong>{tr(lang, "disclaimer")}</strong> {esc(disclaimer)}</div></div></footer>
 </body></html>"""
 
 
 def bullets(items: list[str]) -> str:
-    return "<ul>" + "".join(f"<li>{esc(plain(i))}</li>" for i in items) + "</ul>" if items else '<p class="muted">—</p>'
+    return "<ul>" + "".join(f"<li>{esc(i)}</li>" for i in items) + "</ul>" if items else '<p class="muted">—</p>'
 
 
 def by_rating(calls: list[Call]) -> list[Call]:
@@ -522,133 +693,142 @@ document.querySelectorAll('.rows').forEach(function(t){
 </script>"""
 
 
-def trend(rating: str, prev: str | None) -> str:
+def trend(rating: str, prev: str | None, lang: str = "en") -> str:
     """Arrow against the previous day's rating: up if it improved toward Buy, down if it fell; nothing without one."""
     if not prev or prev not in RATING_ORDER:
         return ""
     move = RATING_ORDER[prev] - RATING_ORDER.get(rating, RATING_ORDER[prev])
+    was = esc(rating_word(prev, lang))
     if move > 0:
-        return f'<div class="chg up" title="Up from {esc(label(prev))}">▲ from {esc(label(prev))}</div>'
+        return f'<div class="chg up">{tr(lang, "up", r=was)}</div>'
     if move < 0:
-        return f'<div class="chg down" title="Down from {esc(label(prev))}">▼ from {esc(label(prev))}</div>'
-    return '<div class="chg" title="Same as the previous day">– unchanged</div>'
+        return f'<div class="chg down">{tr(lang, "down", r=was)}</div>'
+    return f'<div class="chg">{tr(lang, "same")}</div>'
 
 
 def day_body(day: str, calls: list[Call], previous: dict[str, str], depth: int,
-             profiles: dict[str, dict] | None = None) -> str:
+             profiles: dict[str, dict] | None = None, lang: str = "en") -> str:
     """The day's ratings as one table, sorted from Buy at the top to Sell at the bottom."""
     up, profiles = "../" * depth, profiles or {}
     counts = {r: sum(c.rating == r for c in calls) for r in RATING_CLASS}
     segs = "".join(f'<span class="b-{RATING_CLASS[r]}" style="flex:{n}"></span>' for r, n in counts.items() if n)
-    legend = "".join(f'<span><i class="b-{RATING_CLASS[r]}"></i>{label(r)}<b>{n}</b></span>' for r, n in counts.items())
+    legend = "".join(f'<span><i class="b-{RATING_CLASS[r]}"></i>{esc(rating_word(r, lang))}<b>{n}</b></span>'
+                     for r, n in counts.items())
     rows = []
     for c in by_rating(calls):
         prof = profiles.get(c.ticker, {})
-        prev = previous.get(c.ticker)
-        chg = trend(c.rating, prev)
         scores = c.points.get("scores") or {}
-        cells = "".join(f'<div class="sc"><span class="lbl">{label}</span>{level_tag(scores.get(key))}</div>'
-                        for key, label in DIMENSIONS)
+        cells = "".join(f'<div class="sc"><span class="lbl">{tr(lang, key)}</span>{level_tag(scores.get(key), lang)}'
+                        f'</div>' for key, _ in DIMENSIONS)
         rank = {key: LEVELS.index(scores[key]) if scores.get(key) in LEVELS else 9 for key, _ in DIMENSIONS}
         data = (f'data-stock="{esc(c.ticker)}" data-rating="{RATING_ORDER.get(c.rating, 9)}" '
                 + " ".join(f'data-{key}="{v}"' for key, v in rank.items()))
         rows.append(f'<a class="row" {data} href="{up}stocks/{esc(c.ticker)}.html">'
                     f'<div><div class="tk">{esc(c.ticker)}</div><div class="nm">{esc(display_name(prof, c.ticker))}'
-                    f'</div><div class="sec">{esc(prof.get("sector", ""))}</div></div>'
+                    f'</div><div class="sec">{esc(sector_word(prof.get("sector", ""), lang))}</div></div>'
                     f'<div class="scs">{cells}</div>'
-                    f'<div class="rt t-{RATING_CLASS[c.rating]}"><span class="lbl">Final rating</span>'
-                    f'{esc(label(c.rating))}{chg}</div>'
-                    f'<div class="why">{esc(plain(c.points.get("headline")))}</div><span class="go">Full report <i>→</i></span></a>')
-    def sorter(key: str, label: str, cls: str = "", on: bool = False) -> str:
-        state = ' data-dir="asc" aria-sort="ascending"' if on else ""
-        return f'<button type="button" class="sort {cls}" data-key="{key}"{state}>{label}<span class="ar"></span></button>'
+                    f'<div class="rt t-{RATING_CLASS[c.rating]}"><span class="lbl">{tr(lang, "rating")}</span>'
+                    f'{esc(rating_word(c.rating, lang))}{trend(c.rating, previous.get(c.ticker), lang)}</div>'
+                    f'<div class="why">{esc(zh_text(c.points, "headline", lang))}</div>'
+                    f'<span class="go">{tr(lang, "report")} <i>→</i></span></a>')
 
-    options = "".join(f'<option value="{k}">{lbl}</option>' for k, lbl in
-                      (("rating", "Final rating"), ("technical", "Technical"), ("fundamentals", "Fundamentals"),
-                       ("news", "News"), ("stock", "Stock A–Z")))
-    table = (f'<label class="msort">Sort by <select>{options}</select></label>'
-             f'<div class="rows"><div class="row head">{sorter("stock", "Stock")}<div class="scs">'
-             f'{sorter("technical", "Technical")}{sorter("fundamentals", "Fundamentals")}{sorter("news", "News")}'
-             f'</div>{sorter("rating", "Final rating", "rt", on=True)}'
-             f'<div>Summary</div><span></span></div>{"".join(rows)}</div>{SORT_JS}'
-             f'<p class="note">Technical, Fundamentals and News are graded separately by the AI on a five-step '
-             f'scale: {" · ".join(level_tag(lv) for lv in LEVELS)}.</p>')
-    d = datetime.strptime(day, "%Y-%m-%d")
-    return (f'<p class="eyebrow">Daily brief · {d.strftime("%A")}</p><h1>{d.strftime("%B %-d, %Y")}</h1>'
-            f'<p class="lede">AI ratings for {len(calls)} US stocks, ranked from Buy to Sell. '
-            f'<a href="{up}about.html">How it works</a></p>'
+    def sorter(key: str, cls: str = "", on: bool = False) -> str:
+        state = ' data-dir="asc" aria-sort="ascending"' if on else ""
+        return (f'<button type="button" class="sort {cls}" data-key="{key}"{state}>{tr(lang, key)}'
+                f'<span class="ar"></span></button>')
+
+    options = "".join(f'<option value="{k}">{tr(lang, name)}</option>' for k, name in
+                      (("rating", "rating"), ("technical", "technical"), ("fundamentals", "fundamentals"),
+                       ("news", "news"), ("stock", "stock_az")))
+    scale = " · ".join(level_tag(lv, lang) for lv in LEVELS)
+    table = (f'<label class="msort">{tr(lang, "sort_by")} <select>{options}</select></label>'
+             f'<div class="rows"><div class="row head">{sorter("stock")}<div class="scs">'
+             f'{sorter("technical")}{sorter("fundamentals")}{sorter("news")}'
+             f'</div>{sorter("rating", "rt", on=True)}'
+             f'<div>{tr(lang, "summary")}</div><span></span></div>{"".join(rows)}</div>{SORT_JS}'
+             f'<p class="note">{tr(lang, "note", scale=scale)}</p>')
+    weekday, when = nice_date(day, lang)
+    return (f'<p class="eyebrow">{tr(lang, "daily")} · {weekday}</p><h1>{when}</h1>'
+            f'<p class="lede">{tr(lang, "lede", n=len(calls))} <a href="{up}about.html">{tr(lang, "how")}</a></p>'
             f'<div class="dist"><div class="dbar">{segs}</div><div class="legend">{legend}</div></div>'
-            f'<h2>All ratings</h2><p class="hint">Click a row for the full report · '
-            f'click a column header to sort</p>{table}')
+            f'<h2>{tr(lang, "all")}</h2><p class="hint">{tr(lang, "hint")}</p>{table}')
 
 
 def stock_body(ticker: str, latest: Call, history: list[dict], results: dict,
-               profile: dict | None = None) -> str:
+               profile: dict | None = None, lang: str = "en") -> str:
     p, prof = latest.points, profile or {}
     cls = RATING_CLASS.get(latest.rating, "hold")
-    where = " · ".join(esc(x) for x in (prof.get("sector"), prof.get("industry")) if x)
-    about = (f'<h2>About the company</h2><div class="card about"><p>{esc(prof["about"])}</p></div>'
-             if prof.get("about") else "")
+    industry = prof.get("industry_zh") if lang == "zh" and prof.get("industry_zh") else prof.get("industry")
+    where = " · ".join(esc(x) for x in (sector_word(prof.get("sector", ""), lang), industry) if x)
+    about_text = prof.get("about_zh") if lang == "zh" and prof.get("about_zh") else prof.get("about")
+    about = (f'<h2>{tr(lang, "company")}</h2><div class="card about"><p>{esc(about_text)}</p></div>'
+             if about_text else "")
     scores = p.get("scores") or {}
 
     def card(title: str, key: str, extra: str = "") -> str:
-        grade = level_tag(scores[key]) if key in scores else ""
+        grade = level_tag(scores[key], lang) if key in scores else ""
         return (f'<div class="card {extra}"><h3 class="ch"><span>{title}</span>{grade}</h3>'
-                f'{bullets(p.get(key, []))}</div>')
+                f'{bullets(zh_text(p, key, lang) or [])}</div>')
     rows = []
     for h in sorted(history, key=lambda r: r["day"], reverse=True):
         r = results.get((h["day"], ticker))
         if r:
             perf = "".join(f'<td class="{"pos" if v >= 0 else "neg"}">{v:+.1%}</td>' for v in (r["ret"], r["excess"]))
         else:
-            perf = '<td class="muted">pending</td><td></td>'
-        rows.append(f"<tr><td><a href='../days/{h['day']}.html'>{h['day']}</a></td><td>{badge(h['rating'])}</td>"
+            perf = f'<td class="muted">{tr(lang, "pending")}</td><td></td>'
+        rows.append(f"<tr><td><a href='../days/{h['day']}.html'>{h['day']}</a></td><td>{badge(h['rating'], lang)}</td>"
                     f"{perf}</tr>")
-    return (f'<a class="back" href="../index.html">← Today’s ratings</a>'
+    return (f'<a class="back" href="../index.html">{tr(lang, "back")}</a>'
             f'<div class="shead"><div>{f"<p class=eyebrow>{where}</p>" if where else ""}'
-            f'<h1>{esc(ticker)} {badge(latest.rating)}</h1>'
+            f'<h1>{esc(ticker)} {badge(latest.rating, lang)}</h1>'
             f'<div class="nm">{esc(display_name(prof, ticker))}</div></div>'
-            f'<div class="asof">Brief for {latest.day}</div></div>'
-            f'<div class="view v-{cls}"><p class="eyebrow">Today’s view</p><p>{esc(plain(p.get("headline")))}</p></div>'
-            f'{about}<h2>The analysis</h2><div class="grid3">{card("Technical", "technical")}'
-            f'{card("Fundamentals", "fundamentals")}{card("News &amp; macro", "news")}</div>'
-            f'<div class="grid2">{card("Bull case", "bull", "bull")}{card("Bear case", "bear", "bear")}</div>'
-            f'{card("What would change the view", "watch", "watch")}'
-            f'<h2>Rating history</h2><div class="tbl"><table><tr><th>Date</th><th>Rating</th>'
-            f'<th>{HORIZON_DAYS}-day return</th><th>vs S&amp;P 500</th></tr>{"".join(rows)}</table></div>')
+            f'<div class="asof">{tr(lang, "brief_for", d=latest.day)}</div></div>'
+            f'<div class="view v-{cls}"><p class="eyebrow">{tr(lang, "view")}</p>'
+            f'<p>{esc(zh_text(p, "headline", lang))}</p></div>'
+            f'{about}<h2>{tr(lang, "analysis")}</h2><div class="stack">{card(tr(lang, "technical"), "technical")}'
+            f'{card(tr(lang, "fundamentals"), "fundamentals")}{card(tr(lang, "news_card"), "news")}</div>'
+            f'<div class="grid2">{card(tr(lang, "bull"), "bull", "bull")}{card(tr(lang, "bear"), "bear", "bear")}</div>'
+            f'{card(tr(lang, "watch"), "watch", "watch")}'
+            f'<h2>{tr(lang, "history")}</h2><div class="tbl"><table><tr><th>{tr(lang, "date")}</th>'
+            f'<th>{tr(lang, "rating_col")}</th><th>{tr(lang, "ret", n=HORIZON_DAYS)}</th><th>{tr(lang, "vs")}</th></tr>'
+            f'{"".join(rows)}</table></div>')
 
 
-def performance_body(card: list[dict], results: list[dict]) -> str:
+def performance_body(card: list[dict], results: list[dict], lang: str = "en") -> str:
+    title = f'<p class="eyebrow">{tr(lang, "Track record")}</p><h1>{tr(lang, "Track record")}</h1>'
     if not card:
-        return (f"<h1>Track record</h1><p>Each rating is scored by the stock's return over the next "
-                f"{HORIZON_DAYS} trading days, against the S&amp;P 500 (SPY). The first scores appear "
-                f"{HORIZON_DAYS} trading days after the first published ratings.</p>")
+        return f"{title}<p class='lede'>{tr(lang, 'track_empty', n=HORIZON_DAYS)}</p>"
+
     def hit(c: dict) -> str:
         return "—" if c["hit"] is None else f"{c['hit']:.0%}"
 
-    rows = "".join(f"<tr><td>{esc(c['group'])}</td><td>{c['n']}</td><td>{c['avg_ret']:+.2%}</td>"
-                   f"<td>{c['avg_excess']:+.2%}</td><td>{hit(c)}</td></tr>"
-                   for c in card)
+    rows = "".join(f"<tr><td>{esc(tr(lang, c['group']))}</td><td>{c['n']}</td><td>{c['avg_ret']:+.2%}</td>"
+                   f"<td>{c['avg_excess']:+.2%}</td><td>{hit(c)}</td></tr>" for c in card)
     recent = "".join(f"<tr><td>{r['day']}</td><td><a href='stocks/{esc(r['ticker'])}.html'>{esc(r['ticker'])}</a>"
-                     f"</td><td>{badge(r['rating'])}</td><td>{r['ret']:+.1%}</td><td>{r['excess']:+.1%}</td></tr>"
+                     f"</td><td>{badge(r['rating'], lang)}</td><td>{r['ret']:+.1%}</td><td>{r['excess']:+.1%}</td></tr>"
                      for r in sorted(results, key=lambda r: r["day"], reverse=True)[:60])
-    return (f"<h1>Track record</h1><p class='muted'>Return from the close on the rating day to the close "
-            f"{HORIZON_DAYS} trading days later; “vs S&amp;P 500” subtracts SPY over the same days. "
-            f"“Right” means a bullish call beat SPY or a bearish call lagged it. Small samples are noisy.</p>"
-            f"<div class='tbl'><table><tr><th>Ratings</th><th>Calls</th><th>Avg return</th>"
-            f"<th>Avg vs S&amp;P 500</th><th>Right</th></tr>{rows}</table></div>"
-            f"<h2>Recent scored calls</h2><div class='tbl'><table><tr><th>Date</th><th>Stock</th><th>Rating</th>"
-            f"<th>Return</th><th>vs S&amp;P 500</th></tr>{recent}</table></div>")
+    return (f"{title}<p class='lede'>{tr(lang, 'track_note', n=HORIZON_DAYS)}</p><h2></h2>"
+            f"<div class='tbl'><table><tr><th>{tr(lang, 'ratings')}</th><th>{tr(lang, 'calls')}</th>"
+            f"<th>{tr(lang, 'avg_ret')}</th><th>{tr(lang, 'avg_vs')}</th><th>{tr(lang, 'right')}</th></tr>{rows}"
+            f"</table></div><h2>{tr(lang, 'recent')}</h2><div class='tbl'><table><tr><th>{tr(lang, 'date')}</th>"
+            f"<th>{tr(lang, 'stock')}</th><th>{tr(lang, 'rating_col')}</th><th>{tr(lang, 'return')}</th>"
+            f"<th>{tr(lang, 'vs')}</th></tr>{recent}</table></div>")
 
 
-ABOUT = f"""<div class="prose"><p class="eyebrow">About</p><h1>How {SITE_NAME} works</h1>
+ABOUT = {"en": f"""<div class="prose"><p class="eyebrow">About</p><h1>How {SITE_NAME} works</h1>
 <p>{SITE_NAME} publishes one brief per stock each US trading day. A team of AI agents reads price data and
 technical indicators, company filings and financial statements, and recent news and macro data. Bull and bear
 researchers argue the case, a trader drafts a plan, risk reviewers challenge it, and a portfolio-manager agent
 gives the final five-level rating: Buy, Moderate Buy, Hold, Moderate Sell or Sell.</p>
 <p>The research uses the open-source TradingAgents framework. Briefs are generated automatically and are not
 reviewed by a person before publishing. Every rating is scored on the Track record page so you can judge
-how useful it has been.</p></div>"""
+how useful it has been.</p></div>""",
+         "zh": f"""<div class="prose"><p class="eyebrow">关于</p><h1>{SITE_NAME} 是怎么做的</h1>
+<p>{SITE_NAME} 在每个美股交易日为每只股票发布一份简报。一组 AI 智能体分别阅读价格数据和技术指标、公司公告和财务报表，
+以及近期新闻和宏观数据。看多和看空的研究员相互辩论，交易员给出方案，风控审核员提出质疑，最后由投资组合经理智能体给出
+五档最终评级：买入、增持、持有、减持或卖出。</p>
+<p>研究基于开源的 TradingAgents 框架。简报全部自动生成，发布前没有人工审核。每个评级都会在“战绩”页面打分，
+方便你判断它到底有多大参考价值。</p></div>"""}
 
 
 # --- build -------------------------------------------------------------------------------
@@ -656,7 +836,8 @@ how useful it has been.</p></div>"""
 def build(site: Path, ratings: list[dict], *, llm: Callable[[str], str] | None,
           reports_dir: Path = REPORTS_DIR, closes_fn=yf_closes, today: str | None = None,
           profile_fn: Callable[[str, dict | None], dict] = default_profile) -> list[str]:
-    """Write the site; returns the pages written. Key points are cached under data/."""
+    """Write the English site and its Chinese copy under zh/; returns the pages written.
+    Key points, grades and translations are cached under data/."""
     data_dir = site / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     history_path = data_dir / "ratings.json"
@@ -671,18 +852,22 @@ def build(site: Path, ratings: list[dict], *, llm: Callable[[str], str] | None,
     for r in history:
         cache = data_dir / r["day"] / f"{r['ticker']}.json"
         points = json.loads(cache.read_text()) if cache.exists() else None
-        state = None
+        state, dirty = None, False
         if points is None or ("scores" not in points and llm is not None):
             state = load_state(r["ticker"], r["day"], reports_dir)
             if state is None and points is None:
                 continue
         if points is None:
-            points = key_points(state, r["ticker"], r["rating"], llm)
+            points, dirty = key_points(state, r["ticker"], r["rating"], llm), True
         if "scores" not in points and state is not None and llm is not None:
-            points["scores"] = dimension_scores(state, r["ticker"], llm)
-        if state is not None:
+            points["scores"], dirty = dimension_scores(state, r["ticker"], llm), True
+        if "zh" not in points and llm is not None:
+            zh = translate_zh({k: points[k] for k in PUBLIC_KEYS if points.get(k)}, llm)
+            if zh:
+                points["zh"], dirty = zh, True
+        if dirty:
             cache.parent.mkdir(parents=True, exist_ok=True)
-            cache.write_text(json.dumps(points, indent=1))
+            cache.write_text(json.dumps(points, indent=1, ensure_ascii=False))
         calls.append(Call(r["day"], r["ticker"], r["rating"], points))
     history = [r for r in history if any(c.day == r["day"] and c.ticker == r["ticker"] for c in calls)]
     history_path.write_text(json.dumps(history, indent=1))
@@ -698,7 +883,12 @@ def build(site: Path, ratings: list[dict], *, llm: Callable[[str], str] | None,
             fresh = profile_fn(t, load_state(t, latest, reports_dir))
             if fresh.get("about") or t not in profiles:
                 profiles[t] = fresh
-    profiles_path.write_text(json.dumps(profiles, indent=1))
+        prof = profiles[t]
+        if prof.get("about") and "about_zh" not in prof and llm is not None:
+            zh = translate_zh({"about": prof["about"], "industry": prof.get("industry") or ""}, llm)
+            if zh and zh.get("about"):
+                prof["about_zh"], prof["industry_zh"] = zh["about"], zh.get("industry", "")
+    profiles_path.write_text(json.dumps(profiles, indent=1, ensure_ascii=False))
 
     # Track record.
     results: list[dict] = []
@@ -711,35 +901,41 @@ def build(site: Path, ratings: list[dict], *, llm: Callable[[str], str] | None,
     except Exception as exc:  # noqa: BLE001 - the site still builds without scores
         logger.warning("performance unavailable: %s", type(exc).__name__)
     by_key = {(r["day"], r["ticker"]): r for r in results}
+    card = scorecard(results)
 
     written = []
-
-    def write(rel: str, text: str) -> None:
-        p = site / rel
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(text, encoding="utf-8")
-        written.append(rel)
-
     days = sorted({c.day for c in calls})
-    previous: dict[str, str] = {}
-    for d in days:
-        todays = [c for c in calls if c.day == d]
-        write(f"days/{d}.html", page(d, day_body(d, todays, previous, 1, profiles), 1))
-        prev_snapshot = dict(previous)
-        previous.update({c.ticker: c.rating for c in todays})
-        if d == days[-1]:
-            write("index.html", page("Today", day_body(d, todays, prev_snapshot, 0, profiles)))
-    archive = "".join(f"<tr><td><a href='days/{d}.html'>{d}</a></td><td>"
-                      f"{' '.join(f'{esc(c.ticker)} {badge(c.rating)}' for c in by_rating([c for c in calls if c.day == d]))}</td></tr>"
-                      for d in reversed(days))
-    write("archive.html", page("Archive", f"<p class='eyebrow'>Archive</p><h1>Every daily brief</h1><h2>By date</h2><div class='tbl'><table>{archive}</table></div>"))
-    for t in sorted({c.ticker for c in calls}):
-        mine = [c for c in calls if c.ticker == t]
-        write(f"stocks/{t}.html", page(t, stock_body(t, mine[-1], [r for r in history if r["ticker"] == t],
-                                                     by_key, profiles.get(t)), 1))
-    write("performance.html", page("Track record", performance_body(scorecard(results), results)))
-    write("about.html", page("About", ABOUT))
-    write(".nojekyll", "")
+    for lang in LANGS:
+        base = "zh/" if lang == "zh" else ""
+
+        def write(rel: str, title: str, body: str, depth: int, *, base=base, lang=lang) -> None:
+            p = site / base / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(page(title, body, depth, lang, rel), encoding="utf-8")
+            written.append(base + rel)
+
+        previous: dict[str, str] = {}
+        for d in days:
+            todays = [c for c in calls if c.day == d]
+            write(f"days/{d}.html", d, day_body(d, todays, previous, 1, profiles, lang), 1)
+            prev_snapshot = dict(previous)
+            previous.update({c.ticker: c.rating for c in todays})
+            if d == days[-1]:
+                write("index.html", "Today", day_body(d, todays, prev_snapshot, 0, profiles, lang), 0)
+        archive = "".join(
+            f"<tr><td><a href='days/{d}.html'>{d}</a></td><td>"
+            + " ".join(f"{esc(c.ticker)} {badge(c.rating, lang)}" for c in by_rating([c for c in calls if c.day == d]))
+            + "</td></tr>" for d in reversed(days))
+        write("archive.html", "Archive", f"<p class='eyebrow'>{tr(lang, 'Archive')}</p><h1>{tr(lang, 'archive_h1')}"
+              f"</h1><h2>{tr(lang, 'by_date')}</h2><div class='tbl'><table>{archive}</table></div>", 0)
+        for t in sorted({c.ticker for c in calls}):
+            mine = [c for c in calls if c.ticker == t]
+            write(f"stocks/{t}.html", t, stock_body(t, mine[-1], [r for r in history if r["ticker"] == t],
+                                                    by_key, profiles.get(t), lang), 1)
+        write("performance.html", "Track record", performance_body(card, results, lang), 0)
+        write("about.html", "About", ABOUT[lang], 0)
+    (site / ".nojekyll").write_text("")
+    written.append(".nojekyll")
     return written
 
 
@@ -750,7 +946,7 @@ def push(site: Path, message: str) -> str:
     run("add", "-A")
     if run("diff", "--cached", "--quiet").returncode == 0:
         return "nothing to publish"
-    run("-c", "user.name=AI Stock Daily", "-c", "user.email=noreply@users.noreply.github.com",
+    run("-c", "user.name=Stocks Daily", "-c", "user.email=noreply@users.noreply.github.com",
         "commit", "-q", "-m", message)
     out = subprocess.run([git, *cred, "-C", str(site), "push", "-q"], capture_output=True, text=True)
     return "pushed" if out.returncode == 0 else f"push failed: {out.stderr.strip()[:200]}"

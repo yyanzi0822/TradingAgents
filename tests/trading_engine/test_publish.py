@@ -99,9 +99,9 @@ def test_build_writes_pages_without_account_data(tmp_path, monkeypatch):
     assert "▼ from Buy" in index                                # rating change is shown
     assert "&lt;b&gt;margins&lt;/b&gt;" in index                # model text is escaped
     assert "100,000" not in "".join(p.read_text() for p in site.rglob("*.html"))
-    assert len(calls) == 6                                      # key points + scores per stock
+    assert len(calls) == 9                                      # key points, scores, translation
     build(site, ratings, llm=llm, reports_dir=reports, closes_fn=lambda *a: {}, today="2026-11-12")
-    assert len(calls) == 6                                      # both are cached
+    assert len(calls) == 9                                      # all cached
     assert json.loads((site / "data" / "ratings.json").read_text())[-1]["ticker"] == "BBB"
 
 
@@ -124,7 +124,8 @@ def test_disclaimer_is_on_every_page(tmp_path):
     build(site, [{"day": "2026-11-12", "ticker": "AAA", "rating": "Sell"}], llm=None, reports_dir=reports,
           closes_fn=lambda *a: {}, today="2026-11-12")
     for page in site.rglob("*.html"):
-        assert publish.DISCLAIMER[:40] in page.read_text(), page
+        text = publish.DISCLAIMER_ZH if "zh" in page.relative_to(site).parts else publish.DISCLAIMER
+        assert text[:30] in page.read_text(), page
 
 
 def test_day_list_runs_from_buy_to_sell_with_company_profiles(tmp_path):
@@ -206,3 +207,34 @@ def test_public_labels_replace_broker_jargon():
     assert publish.label("Buy") == "Buy"
     assert publish.plain("CRDO is rated Overweight as growth holds.") == "CRDO is rated Moderate Buy as growth holds."
     assert "Moderate Sell" in publish.badge("Underweight")
+
+
+def test_chinese_pages_mirror_the_english_ones(tmp_path):
+    reports, site = tmp_path / "r", tmp_path / "s"
+    write_state(reports, "AAA", "2026-11-12", "Overweight")
+
+    def llm(prompt):
+        if "Simplified Chinese" in prompt:
+            return '{"headline": "AAA 被评为增持。", "technical": ["趋势向上"]}'
+        if "Grade AAA" in prompt:
+            return '{"technical": "Good", "fundamentals": "Strong", "news": "Mixed"}'
+        return '{"headline": "AAA is rated Overweight.", "technical": ["Uptrend"]}'
+
+    written = build(site, [{"day": "2026-11-12", "ticker": "AAA", "rating": "Overweight"}], llm=llm,
+                    reports_dir=reports, closes_fn=lambda *a: {}, today="2026-11-12")
+    assert "zh/index.html" in written and "zh/stocks/AAA.html" in written
+    en, zh = (site / "index.html").read_text(), (site / "zh" / "index.html").read_text()
+    assert "Moderate Buy" in en and "AAA is rated Moderate Buy." in en
+    assert "增持" in zh and "AAA 被评为增持。" in zh and "2026年11月12日" in zh and "技术面" in zh
+    assert 'href="zh/index.html"' in en and 'href="../index.html"' in zh          # the EN | 中文 switch
+    stock = (site / "zh" / "stocks" / "AAA.html").read_text()
+    assert "趋势向上" in stock and 'href="../../stocks/AAA.html"' in stock
+    cached = json.loads((site / "data" / "2026-11-12" / "AAA.json").read_text())
+    assert cached["zh"]["headline"] == "AAA 被评为增持。"
+
+
+def test_translation_keeps_the_shape_or_gives_up():
+    assert publish.translate_zh({"headline": "x"}, None) is None
+    assert publish.translate_zh({"headline": "x", "bull": ["a"]}, lambda p: "not json") is None
+    got = publish.translate_zh({"headline": "x", "bull": ["a"]}, lambda p: '{"headline": "甲", "bull": "乙"}')
+    assert got == {"headline": "甲"}                                    # a list that came back as text is dropped
