@@ -258,3 +258,73 @@ def test_verdict_explains_the_rating_and_shows_on_the_stock_page(tmp_path):
     page = (site / "stocks" / "AAA.html").read_text()
     assert "<h2>Why Moderate Buy</h2>" in page and "<h2>Summary</h2>" in page and "margin worries for Moderate Buy." in page
     assert "Why not Buy" in page and "Why not Hold" in page
+
+
+def fake_history(days=260, start=100.0, step=0.5):
+    import pandas as pd
+    idx = pd.bdate_range(end="2026-11-11", periods=days)
+    close = pd.Series([start + i * step for i in range(days)], index=idx)
+    return pd.DataFrame({"Close": close, "High": close + 1, "Low": close - 1,
+                         "Volume": [1_000_000] * (days - 1) + [2_000_000]}, index=idx)
+
+
+def test_technicals_compute_the_fixed_indicators():
+    ind = publish.technicals("AAA", "2026-11-12", lambda t, s, e: fake_history())
+    rows = {r["key"]: r for r in ind["rows"]}
+    assert ind["asof"] == "2026-11-11"                # the close before the rating day
+    assert list(rows) == ["price", "ema10", "sma50", "sma200", "rsi", "macd", "bb", "atr", "hi52", "vol"]
+    assert rows["sma200"]["signal"] == "bull" and rows["sma200"]["pct"] > 0          # steady uptrend
+    assert rows["rsi"]["reading"] == "overbought" and rows["rsi"]["signal"] == "warn"
+    assert rows["vol"]["value"] == "2.00×"
+    assert publish.technicals("AAA", "2026-11-12", lambda t, s, e: fake_history(days=20)) is None
+    assert publish.technicals("AAA", "2026-11-12", lambda t, s, e: 1 / 0) is None
+
+
+def test_indicator_table_is_on_the_stock_page_in_both_languages(tmp_path):
+    reports, site = tmp_path / "r", tmp_path / "s"
+    write_state(reports, "AAA", "2026-11-12", "Hold")
+    build(site, [{"day": "2026-11-12", "ticker": "AAA", "rating": "Hold"}], llm=None, reports_dir=reports,
+          closes_fn=lambda *a: {}, today="2026-11-12", history_fn=lambda t, s, e: fake_history())
+    en = (site / "stocks" / "AAA.html").read_text()
+    zh = (site / "zh" / "stocks" / "AAA.html").read_text()
+    assert "200-day SMA" in en and "Overbought (above 70)" in en and "As of close 2026-11-11" in en
+    assert "200 日均线" in zh and "超买（高于 70）" in zh
+
+
+INFO = {"marketCap": 26.3e9, "totalRevenue": 1.59e9, "revenueGrowth": 1.147, "grossMargins": 0.67,
+        "operatingMargins": 0.317, "profitMargins": 0.338, "freeCashflow": -2.5e8, "trailingPE": 49.6,
+        "forwardPE": 44.0, "debtToEquity": 0.96, "totalCash": 7.6e8, "totalDebt": 2.6e7}
+
+
+def test_fundamentals_table_rows_and_signals():
+    fd = publish.fundamentals("AAA", "2026-11-12", lambda t: INFO)
+    rows = {r["key"]: r for r in fd["rows"]}
+    assert rows["mcap"]["value"] == "$26.30B" and rows["revenue"]["value"] == "$1.59B"
+    assert rows["rev_growth"]["value"] == "+114.7%" and rows["rev_growth"]["signal"] == "pos"
+    assert rows["fcf"]["value"] == "-$250.00M" and rows["fcf"]["signal"] == "neg"
+    assert rows["fpe"]["signal"] == "warn" and rows["de"]["value"] == "0.01×"
+    assert rows["net_cash"]["reading"] == "net_cash" and rows["net_cash"]["signal"] == "pos"
+    assert publish.fundamentals("AAA", "2026-11-12", lambda t: {}) is None
+    assert publish.fundamentals("AAA", "2026-11-12", lambda t: 1 / 0) is None
+
+
+def test_news_items_get_bold_titles(tmp_path):
+    assert publish.news_titles(["a", "b"], lambda p: '["One"]') is None             # count must match
+    assert publish.news_titles(["a"], lambda p: '["Chip demand rises."]') == ["Chip demand rises"]
+    reports, site = tmp_path / "r", tmp_path / "s"
+    write_state(reports, "AAA", "2026-11-12", "Hold")
+
+    def llm(prompt):
+        if "headline-style title" in prompt:
+            return '["Rates stay high"]'
+        if "Simplified Chinese" in prompt:
+            return '{"news_titles": ["利率维持高位"]}' if "news_titles" in prompt else '{"news": ["十年期收益率上升"]}'
+        return '{"headline": "AAA is rated Hold.", "news": ["The 10-year yield rose."]}'
+
+    build(site, [{"day": "2026-11-12", "ticker": "AAA", "rating": "Hold"}], llm=llm, reports_dir=reports,
+          closes_fn=lambda *a: {}, today="2026-11-12", info_fn=lambda t: INFO)
+    en = (site / "stocks" / "AAA.html").read_text()
+    assert "<li><b>Rates stay high</b>The 10-year yield rose.</li>" in en
+    assert "Revenue growth" in en and "Latest reported figures" in en
+    zh = (site / "zh" / "stocks" / "AAA.html").read_text()
+    assert "<b>利率维持高位</b>" in zh and "营收增速" in zh

@@ -350,6 +350,154 @@ def yf_closes(tickers: list[str], start: str, end: str) -> dict[str, dict[str, f
     return out
 
 
+def yf_history(ticker: str, start: str, end: str):
+    """Daily OHLCV from Yahoo Finance as a DataFrame indexed by date."""
+    import yfinance as yf
+
+    df = yf.Ticker(ticker).history(start=start, end=end, auto_adjust=True)
+    df.index = df.index.tz_localize(None) if getattr(df.index, "tz", None) is not None else df.index
+    return df
+
+
+# The same indicators every day, computed from prices rather than read out of the report.
+# signal: "bull", "bear", "neutral" or "warn" (stretched: overbought, oversold, outside the bands).
+def technicals(ticker: str, day: str, history_fn=yf_history) -> dict | None:
+    """Fixed indicator table for `ticker` as of the last close before `day`, the data the morning analysis saw."""
+    try:
+        end = (datetime.strptime(day, "%Y-%m-%d") + timedelta(days=1)).date().isoformat()
+        start = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=420)).date().isoformat()
+        df = history_fn(ticker, start, end)
+        df = df[[str(i)[:10] < day for i in df.index]]
+    except Exception as exc:  # noqa: BLE001 - the card falls back to the written notes
+        logger.warning("indicators for %s unavailable: %s", ticker, type(exc).__name__)
+        return None
+    if df is None or len(df) < 35:
+        return None
+    close, high, low, vol = df["Close"], df["High"], df["Low"], df["Volume"]
+    price = float(close.iloc[-1])
+    rows: list[dict] = []
+
+    def add(key, value, reading="", signal="neutral", pct=None):
+        rows.append({"key": key, "value": value, "reading": reading, "signal": signal, "pct": pct})
+
+    change = price / float(close.iloc[-2]) - 1
+    add("price", f"${price:,.2f}", "", "bull" if change > 0 else "bear" if change < 0 else "neutral", change)
+    for key, series in (("ema10", close.ewm(span=10, adjust=False).mean()), ("sma50", close.rolling(50).mean()),
+                        ("sma200", close.rolling(200).mean())):
+        avg = series.iloc[-1]
+        if avg != avg:  # not enough history (NaN)
+            continue
+        gap = price / float(avg) - 1
+        add(key, f"${float(avg):,.2f}", "above" if gap >= 0 else "below", "bull" if gap >= 0 else "bear", gap)
+    delta = close.diff()
+    gain = delta.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, adjust=False).mean()
+    rsi = float(100 - 100 / (1 + gain.iloc[-1] / loss.iloc[-1])) if float(loss.iloc[-1]) else 100.0
+    add("rsi", f"{rsi:.1f}", "overbought" if rsi > 70 else "oversold" if rsi < 30 else "neutral_zone",
+        "warn" if rsi > 70 or rsi < 30 else "neutral")
+    macd = close.ewm(span=12, adjust=False).mean() - close.ewm(span=26, adjust=False).mean()
+    sig = macd.ewm(span=9, adjust=False).mean()
+    hist = float(macd.iloc[-1] - sig.iloc[-1])
+    add("macd", f"{float(macd.iloc[-1]):+.2f}", "above_signal" if hist >= 0 else "below_signal",
+        "bull" if hist >= 0 else "bear", None)
+    mid, sd = close.rolling(20).mean(), close.rolling(20).std()
+    upper, lower = float(mid.iloc[-1] + 2 * sd.iloc[-1]), float(mid.iloc[-1] - 2 * sd.iloc[-1])
+    pct_b = (price - lower) / (upper - lower) if upper > lower else 0.5
+    add("bb", f"{pct_b:.0%}", "above_upper" if price > upper else "below_lower" if price < lower else "inside",
+        "warn" if price > upper or price < lower else "neutral")
+    tr_ = (high - low).combine((high - close.shift()).abs(), max).combine((low - close.shift()).abs(), max)
+    atr = float(tr_.ewm(alpha=1 / 14, adjust=False).mean().iloc[-1])
+    add("atr", f"${atr:,.2f}", "of_price", "neutral", atr / price)
+    hi = float(high.iloc[-252:].max())
+    add("hi52", f"${hi:,.2f}", "from_high", "neutral", price / hi - 1)
+    avg_vol = float(vol.iloc[-21:-1].mean())
+    if avg_vol:
+        add("vol", f"{float(vol.iloc[-1]) / avg_vol:.2f}×", "vs_avg", "neutral", None)
+    return {"asof": str(df.index[-1])[:10], "rows": rows}
+
+
+def yf_info(ticker: str) -> dict:
+    import yfinance as yf
+
+    return yf.Ticker(ticker).info or {}
+
+
+def money(n: float) -> str:
+    sign, n = ("-" if n < 0 else ""), abs(n)
+    for unit, size in (("T", 1e12), ("B", 1e9), ("M", 1e6)):
+        if n >= size:
+            return f"{sign}${n / size:,.2f}{unit}"
+    return f"{sign}${n:,.0f}"
+
+
+def fundamentals(ticker: str, day: str, info_fn=yf_info) -> dict | None:
+    """Fixed fundamentals table from the latest reported figures (a snapshot taken when first built)."""
+    try:
+        info = info_fn(ticker) or {}
+    except Exception as exc:  # noqa: BLE001 - the card falls back to the written notes
+        logger.warning("fundamentals for %s unavailable: %s", ticker, type(exc).__name__)
+        return None
+    rows: list[dict] = []
+
+    def num(key):
+        v = info.get(key)
+        return float(v) if isinstance(v, (int, float)) and v == v else None
+
+    def add(key, value, signal="neutral", reading=""):
+        rows.append({"key": key, "value": value, "signal": signal, "reading": reading})
+
+    def pct(v):
+        return f"{v:+.1%}" if v is not None else ""
+
+    if (v := num("marketCap")) is not None:
+        add("mcap", money(v))
+    if (v := num("totalRevenue")) is not None:
+        add("revenue", money(v))
+    if (v := num("revenueGrowth")) is not None:
+        add("rev_growth", pct(v), "pos" if v > 0.10 else "neg" if v < 0 else "neutral", "yoy")
+    if (v := num("grossMargins")) is not None:
+        add("gross", f"{v:.1%}")
+    if (v := num("operatingMargins")) is not None:
+        add("op_margin", f"{v:.1%}", "pos" if v > 0.15 else "neg" if v < 0 else "neutral")
+    if (v := num("profitMargins")) is not None:
+        add("net_margin", f"{v:.1%}", "pos" if v > 0.10 else "neg" if v < 0 else "neutral")
+    if (v := num("freeCashflow")) is not None:
+        add("fcf", money(v), "pos" if v > 0 else "neg")
+    if (v := num("trailingPE")) is not None and v > 0:
+        add("pe", f"{v:.1f}×", "warn" if v > 50 else "neutral")
+    if (v := num("forwardPE")) is not None and v > 0:
+        add("fpe", f"{v:.1f}×", "warn" if v > 40 else "neutral")
+    if (v := num("debtToEquity")) is not None:
+        add("de", f"{v / 100:.2f}×", "warn" if v > 200 else "neutral")       # Yahoo gives a percentage
+    cash, debt = num("totalCash"), num("totalDebt")
+    if cash is not None and debt is not None:
+        add("net_cash", money(cash - debt), "pos" if cash > debt else "neg" if debt > 2 * cash else "neutral",
+            "net_cash" if cash >= debt else "net_debt")
+    return {"asof": day, "rows": rows} if len(rows) >= 4 else None
+
+
+NEWS_TITLES_PROMPT = """Give each news item below a short headline-style title of 2 to 5 words (no period).
+Return only a JSON list of strings, one per item, in the same order.
+
+{items}"""
+
+
+def news_titles(items: list[str], llm: Callable[[str], str] | None) -> list[str] | None:
+    """A short bold title for each news bullet; None unless the model returns one per item."""
+    if llm is None or not items:
+        return None
+    try:
+        raw = llm(NEWS_TITLES_PROMPT.format(items="\n".join(f"{i + 1}. {t}" for i, t in enumerate(items))))
+        m = re.search(r"\[.*\]", raw, re.S)
+        got = json.loads(m.group(0)) if m else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("news titles failed: %s", type(exc).__name__)
+        return None
+    if not isinstance(got, list) or len(got) != len(items) or not all(isinstance(t, str) and t.strip() for t in got):
+        return None
+    return [scrub(t.strip().rstrip(".")) or t.strip() for t in got]
+
+
 def forward_returns(ratings: list[dict], closes: dict[str, dict[str, float]],
                     benchmark: str = "SPY", horizon: int = HORIZON_DAYS) -> list[dict]:
     """Return from the close on the rating day to the close `horizon` sessions later, and vs the benchmark."""
@@ -416,6 +564,25 @@ STR = {
         "up": "▲ from {r}", "down": "▼ from {r}", "same": "– unchanged", "back": "← Today’s ratings",
         "brief_for": "Brief for {d}", "view": "Summary", "company": "About the company",
         "analysis": "The analysis", "news_card": "News &amp; macro", "bull": "Bull case", "bear": "Bear case",
+        "ind": {"price": "Close", "ema10": "10-day EMA", "sma50": "50-day SMA", "sma200": "200-day SMA",
+                "rsi": "RSI (14)", "macd": "MACD (12, 26, 9)", "bb": "Bollinger %B (20, 2)", "atr": "ATR (14)",
+                "hi52": "52-week high", "vol": "Volume vs 20-day avg"},
+        "reading": {"above": "Price {p} above", "below": "Price {p} below", "overbought": "Overbought (above 70)",
+                    "oversold": "Oversold (below 30)", "neutral_zone": "Between 30 and 70",
+                    "above_signal": "Above signal line", "below_signal": "Below signal line",
+                    "above_upper": "Above upper band", "below_lower": "Below lower band",
+                    "inside": "Inside the bands", "of_price": "{p} of price", "from_high": "Price {p} from high",
+                    "vs_avg": "Today’s volume vs average"},
+        "signal": {"bull": "Bullish", "bear": "Bearish", "neutral": "Neutral", "warn": "Stretched",
+                   "pos": "Positive", "neg": "Negative", "caution": "Caution"},
+        "fund": {"mcap": "Market cap", "revenue": "Revenue (TTM)", "rev_growth": "Revenue growth",
+                 "gross": "Gross margin", "op_margin": "Operating margin", "net_margin": "Net margin",
+                 "fcf": "Free cash flow (TTM)", "pe": "P/E (TTM)", "fpe": "Forward P/E", "de": "Debt / equity",
+                 "net_cash": "Cash minus debt"},
+        "fund_reading": {"yoy": "Latest quarter, year over year", "net_cash": "Net cash", "net_debt": "Net debt"},
+        "metric": "Metric", "latest": "Latest reported figures, fetched {d}",
+        "indicator": "Indicator", "value": "Value", "reading_col": "Reading", "signal_col": "Signal",
+        "asof": "As of close {d}", "notes": "Notes",
         "watch": "What to watch", "why": "Why {r}", "not_higher": "Why not {r}", "not_lower": "Why not {r}", "history": "Rating history", "date": "Date", "rating_col": "Rating",
         "ret": "{n}-day return", "vs": "vs S&amp;P 500", "pending": "pending",
         "archive_h1": "Every daily brief", "by_date": "By date",
@@ -440,6 +607,24 @@ STR = {
         "up": "▲ 由{r}上调", "down": "▼ 由{r}下调", "same": "– 维持", "back": "← 今日评级",
         "brief_for": "{d} 简报", "view": "结论", "company": "公司简介",
         "analysis": "分析详情", "news_card": "新闻与宏观", "bull": "看多理由", "bear": "看空理由",
+        "ind": {"price": "收盘价", "ema10": "10 日指数均线", "sma50": "50 日均线", "sma200": "200 日均线",
+                "rsi": "RSI (14)", "macd": "MACD (12, 26, 9)", "bb": "布林带 %B (20, 2)", "atr": "ATR (14)",
+                "hi52": "52 周最高价", "vol": "成交量 / 20 日均量"},
+        "reading": {"above": "股价高出 {p}", "below": "股价低于 {p}", "overbought": "超买（高于 70）",
+                    "oversold": "超卖（低于 30）", "neutral_zone": "处于 30–70 之间",
+                    "above_signal": "位于信号线上方", "below_signal": "位于信号线下方",
+                    "above_upper": "突破上轨", "below_lower": "跌破下轨", "inside": "位于带内",
+                    "of_price": "占股价 {p}", "from_high": "距高点 {p}", "vs_avg": "当日成交量与均量之比"},
+        "signal": {"bull": "偏多", "bear": "偏空", "neutral": "中性", "warn": "偏离较大",
+                   "pos": "正面", "neg": "负面", "caution": "注意"},
+        "fund": {"mcap": "市值", "revenue": "营收（近 12 个月）", "rev_growth": "营收增速",
+                 "gross": "毛利率", "op_margin": "营业利润率", "net_margin": "净利率",
+                 "fcf": "自由现金流（近 12 个月）", "pe": "市盈率（TTM）", "fpe": "预期市盈率", "de": "负债 / 权益",
+                 "net_cash": "现金减负债"},
+        "fund_reading": {"yoy": "最近一季，同比", "net_cash": "净现金", "net_debt": "净负债"},
+        "metric": "指标", "latest": "最新已披露数据，{d} 获取",
+        "indicator": "指标", "value": "数值", "reading_col": "解读", "signal_col": "信号",
+        "asof": "截至 {d} 收盘", "notes": "AI 点评",
         "watch": "后续关注", "why": "为什么是{r}", "not_higher": "为什么不是{r}", "not_lower": "为什么不是{r}", "history": "历史评级", "date": "日期", "rating_col": "评级",
         "ret": "{n} 日涨跌", "vs": "相对标普 500", "pending": "待定",
         "archive_h1": "所有每日简报", "by_date": "按日期",
@@ -544,7 +729,12 @@ a:hover{text-decoration-color:var(--fg)}
 .lang{display:inline-flex;border:1px solid var(--input);border-radius:8px;padding:2px;gap:2px;box-shadow:var(--shadow-xs);flex:none}
 .lang a{font-size:12.5px;font-weight:500;color:var(--muted);text-decoration:none;padding:3px 9px;border-radius:6px}
 .lang a:hover{color:var(--fg)}.lang a.on{background:var(--secondary);color:var(--fg)}
-.stack{display:grid;gap:16px}.verdict{margin-top:16px}
+.stack{display:grid;gap:16px}
+.ind{margin:4px 0 18px}.ind table{font-size:14px}.ind th,.ind td{padding:8px 12px 8px 0}.ind th{height:auto;
+font-size:13px}.ind td:first-child{color:var(--muted)}.num{text-align:right;padding-right:28px!important;
+font-variant-numeric:tabular-nums;white-space:nowrap}.ind tr:hover td{background:none}.ind .asof{margin:8px 0 0;font-size:12px}
+.titled li b{display:block;font-weight:600;color:var(--fg);margin-bottom:1px}.titled li{margin:12px 0}
+.card h4{font-size:13px;font-weight:500;color:var(--muted);margin:0 0 4px}.verdict{margin-top:16px}
 .sides{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}
 .sides h3{font-size:13px;color:var(--muted);font-weight:500;margin:0 0 6px}.sides p{margin:0;font-size:14px;line-height:1.55}
 @media (max-width:640px){.sides{grid-template-columns:1fr}}h2+.stack{margin-top:16px}
@@ -816,8 +1006,19 @@ def stock_body(ticker: str, latest: Call, history: list[dict], results: dict,
 
     def card(title: str, key: str, extra: str = "") -> str:
         grade = level_tag(scores[key], lang) if key in scores else ""
-        return (f'<div class="card {extra}"><h3 class="ch"><span>{title}</span>{grade}</h3>'
-                f'{bullets(zh_text(p, key, lang) or [])}</div>')
+        notes = bullets(zh_text(p, key, lang) or [])
+        if key == "technical" and p.get("indicators"):
+            notes = f'{indicator_table(p["indicators"], lang)}<h4>{tr(lang, "notes")}</h4>{notes}'
+        if key == "fundamentals" and p.get("fundamentals_data"):
+            notes = f'{fundamentals_table(p["fundamentals_data"], lang)}<h4>{tr(lang, "notes")}</h4>{notes}'
+        if key == "news":
+            items = zh_text(p, "news", lang) or []
+            titles = (((p.get("zh") or {}).get("news_titles") if lang == "zh" else None)
+                      or p.get("news_titles") or [])
+            if items and len(titles) == len(items):
+                notes = "<ul class=titled>" + "".join(f"<li><b>{esc(t)}</b>{esc(i)}</li>"
+                                                      for t, i in zip(titles, items, strict=True)) + "</ul>"
+        return f'<div class="card {extra}"><h3 class="ch"><span>{title}</span>{grade}</h3>{notes}</div>'
     rows = []
     for h in sorted(history, key=lambda r: r["day"], reverse=True):
         r = results.get((h["day"], ticker))
@@ -841,6 +1042,43 @@ def stock_body(ticker: str, latest: Call, history: list[dict], results: dict,
             f'<h2>{tr(lang, "history")}</h2><div class="tbl"><table><tr><th>{tr(lang, "date")}</th>'
             f'<th>{tr(lang, "rating_col")}</th><th>{tr(lang, "ret", n=HORIZON_DAYS)}</th><th>{tr(lang, "vs")}</th></tr>'
             f'{"".join(rows)}</table></div>')
+
+
+def indicator_table(ind: dict, lang: str = "en") -> str:
+    """The fixed technical indicators as a small table: value, what it means, and a colored signal."""
+    S = STR[lang]
+    sig_class = {"bull": "t-buy", "bear": "t-sell", "neutral": "t-hold", "warn": "t-uw"}
+    rows = []
+    for r in ind.get("rows", []):
+        pct = f"{abs(r['pct']):.1%}" if r.get("pct") is not None else ""
+        if r["key"] == "price":
+            reading = f'<span class="{"pos" if (r.get("pct") or 0) >= 0 else "neg"}">{r["pct"]:+.2%}</span>' \
+                if r.get("pct") is not None else ""
+        else:
+            reading = esc(S["reading"].get(r["reading"], "").format(p=pct))
+        signal = "" if r["key"] in ("price", "atr", "hi52", "vol") else \
+            f'<span class="{sig_class.get(r["signal"], "t-hold")}">{S["signal"].get(r["signal"], "")}</span>'
+        rows.append(f'<tr><td>{S["ind"].get(r["key"], r["key"])}</td><td class="num">{esc(r["value"])}</td>'
+                    f'<td>{reading}</td><td>{signal}</td></tr>')
+    return (f'<div class="ind"><table><tr><th>{S["indicator"]}</th><th class="num">{S["value"]}</th>'
+            f'<th>{S["reading_col"]}</th><th>{S["signal_col"]}</th></tr>{"".join(rows)}</table>'
+            f'<p class="asof">{tr(lang, "asof", d=ind.get("asof", ""))}</p></div>')
+
+
+def fundamentals_table(fd: dict, lang: str = "en") -> str:
+    S = STR[lang]
+    cls = {"pos": "t-buy", "neg": "t-sell", "neutral": "t-hold", "warn": "t-uw"}
+    words = {"pos": S["signal"]["pos"], "neg": S["signal"]["neg"], "neutral": S["signal"]["neutral"],
+             "warn": S["signal"]["caution"]}
+    rows = []
+    for r in fd.get("rows", []):
+        signal = "" if r["key"] in ("mcap", "revenue", "gross") else \
+            f'<span class="{cls.get(r["signal"], "t-hold")}">{words.get(r["signal"], "")}</span>'
+        rows.append(f'<tr><td>{S["fund"].get(r["key"], r["key"])}</td><td class="num">{esc(r["value"])}</td>'
+                    f'<td>{esc(S["fund_reading"].get(r.get("reading", ""), ""))}</td><td>{signal}</td></tr>')
+    return (f'<div class="ind"><table><tr><th>{S["metric"]}</th><th class="num">{S["value"]}</th>'
+            f'<th>{S["reading_col"]}</th><th>{S["signal_col"]}</th></tr>{"".join(rows)}</table>'
+            f'<p class="asof">{tr(lang, "latest", d=fd.get("asof", ""))}</p></div>')
 
 
 def verdict_card(points: dict, rating: str, lang: str = "en") -> str:
@@ -902,7 +1140,8 @@ how useful it has been.</p></div>""",
 
 def build(site: Path, ratings: list[dict], *, llm: Callable[[str], str] | None,
           reports_dir: Path = REPORTS_DIR, closes_fn=yf_closes, today: str | None = None,
-          profile_fn: Callable[[str, dict | None], dict] = default_profile) -> list[str]:
+          profile_fn: Callable[[str, dict | None], dict] = default_profile,
+          history_fn=None, info_fn=None) -> list[str]:
     """Write the English site and its Chinese copy under zh/; returns the pages written.
     Key points, grades and translations are cached under data/."""
     data_dir = site / "data"
@@ -928,6 +1167,18 @@ def build(site: Path, ratings: list[dict], *, llm: Callable[[str], str] | None,
             points, dirty = key_points(state, r["ticker"], r["rating"], llm), True
         if "scores" not in points and state is not None and llm is not None:
             points["scores"], dirty = dimension_scores(state, r["ticker"], llm), True
+        if "indicators" not in points and history_fn is not None:
+            ind = technicals(r["ticker"], r["day"], history_fn)
+            if ind:
+                points["indicators"], dirty = ind, True
+        if "fundamentals_data" not in points and info_fn is not None:
+            fd = fundamentals(r["ticker"], r["day"], info_fn)
+            if fd:
+                points["fundamentals_data"], dirty = fd, True
+        if "news_titles" not in points and points.get("news") and llm is not None:
+            titles = news_titles(points["news"], llm)
+            if titles:
+                points["news_titles"], dirty = titles, True
         if "verdict" not in points and llm is not None:
             state = state or load_state(r["ticker"], r["day"], reports_dir)
             if state is not None:
@@ -942,6 +1193,10 @@ def build(site: Path, ratings: list[dict], *, llm: Callable[[str], str] | None,
                 if points.get("verdict"):
                     zh["verdict"] = translate_zh({k: v for k, v in points["verdict"].items() if v}, llm) or {}
                 points["zh"], dirty = zh, True
+        if points.get("news_titles") and "zh" in points and "news_titles" not in points["zh"] and llm is not None:
+            zh = translate_zh({"news_titles": points["news_titles"]}, llm)
+            if zh and len(zh.get("news_titles", [])) == len(points["news_titles"]):
+                points["zh"]["news_titles"], dirty = zh["news_titles"], True
         if dirty:
             cache.parent.mkdir(parents=True, exist_ok=True)
             cache.write_text(json.dumps(points, indent=1, ensure_ascii=False))
@@ -1043,7 +1298,8 @@ def main(argv: list[str]) -> int:
 
     site = Path(args.site).expanduser()
     llm = None if args.no_llm else make_llm()
-    written = build(site, ledger_ratings(Path(args.ledger)), llm=llm, profile_fn=make_profile_fn(llm))
+    written = build(site, ledger_ratings(Path(args.ledger)), llm=llm, profile_fn=make_profile_fn(llm),
+                    history_fn=yf_history, info_fn=yf_info)
     print(f"wrote {len(written)} files to {site}")
     if args.push and written:
         print(push(site, f"Briefs for {date.today().isoformat()}"))
