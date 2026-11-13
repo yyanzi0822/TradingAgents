@@ -325,10 +325,15 @@ box-shadow:var(--shadow)}.dbar{display:flex;height:10px;border-radius:999px;over
 .legend{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:12px;font-size:13px;color:var(--muted)}
 .legend b{color:var(--fg);font-weight:600;margin-left:4px}.legend i{display:inline-block;width:8px;height:8px;
 border-radius:2px;margin-right:6px;vertical-align:1px}
+.row.head{padding:10px 20px;background:var(--bg);font-size:12px;font-weight:600;color:var(--muted);
+text-transform:uppercase;letter-spacing:.06em}.row.head:hover{background:var(--bg)}
+.sec{font-size:13px;color:var(--muted)}.why{font-size:14.5px;line-height:1.5}
+.rt{font-weight:700;font-size:15px}.rt .chg{font-weight:500}.t-buy{color:var(--buy)}.t-ow{color:var(--ow)}
+.t-hold{color:var(--hold)}.t-uw{color:var(--uw)}.t-sell{color:var(--sell)}
 .group{margin-top:32px}.ghead{display:flex;align-items:center;gap:10px;margin-bottom:10px}
 .ghead .n{font-size:13px;color:var(--faint)}
 .rows{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow)}
-.row{display:grid;grid-template-columns:200px 1fr 20px;gap:6px 24px;align-items:center;padding:16px 20px;
+.row{display:grid;grid-template-columns:190px 160px 110px 1fr 20px;gap:6px 20px;align-items:center;padding:16px 20px;
 color:var(--fg);border-top:1px solid var(--line);transition:background .12s}
 .row:first-child{border-top:0}.row:hover{background:var(--bg);text-decoration:none}.row:hover .chev{color:var(--fg);transform:translateX(2px)}
 .tk{font-weight:700;font-size:17px;letter-spacing:-.01em}.nm{font-size:13px;color:var(--muted);line-height:1.4;margin-top:2px}
@@ -358,8 +363,9 @@ footer{border-top:1px solid var(--line);margin-top:56px;padding:24px 0 48px;font
 footer .wrap>div{max-width:760px}
 @media (max-width:820px){.grid3{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}}
 @media (max-width:640px){h1{font-size:28px}.shead h1{font-size:32px}main{padding-top:28px}
-.row{grid-template-columns:1fr 20px;padding:14px 16px}.row .why{grid-column:1}.row .chev{grid-row:1/3;grid-column:2}
-.bar{height:auto;padding:12px 0;flex-direction:column;align-items:flex-start;gap:8px}nav{max-width:100%}}
+.row{grid-template-columns:1fr auto;padding:14px 16px;gap:4px 12px}.row .sec{grid-column:1;grid-row:2}
+.row .rt{grid-column:2;grid-row:1;text-align:right}.row .why{grid-column:1/3}.row .chev,.row.head{display:none}
+.bar{height:auto;padding-top:12px;padding-bottom:12px;flex-direction:column;align-items:flex-start;gap:8px}nav{max-width:100%}}
 """
 
 NAV = [("Today", "index.html"), ("Archive", "archive.html"), ("Track record", "performance.html"),
@@ -405,35 +411,29 @@ def display_name(prof: dict, ticker: str) -> str:
 
 def day_body(day: str, calls: list[Call], previous: dict[str, str], depth: int,
              profiles: dict[str, dict] | None = None) -> str:
-    """The day's ratings as one list, grouped from Buy at the top to Sell at the bottom."""
+    """The day's ratings as one table, sorted from Buy at the top to Sell at the bottom."""
     up, profiles = "../" * depth, profiles or {}
     counts = {r: sum(c.rating == r for c in calls) for r in RATING_CLASS}
     segs = "".join(f'<span class="b-{RATING_CLASS[r]}" style="flex:{n}"></span>' for r, n in counts.items() if n)
     legend = "".join(f'<span><i class="b-{RATING_CLASS[r]}"></i>{r}<b>{n}</b></span>' for r, n in counts.items())
-    groups = []
-    for rating in RATING_CLASS:
-        mine = [c for c in by_rating(calls) if c.rating == rating]
-        if not mine:
-            continue
-        rows = []
-        for c in mine:
-            prof = profiles.get(c.ticker, {})
-            prev = previous.get(c.ticker)
-            chg = f'<span class="chg">was {esc(prev)}</span>' if prev and prev != c.rating else ""
-            sector = f'<span class="chip">{esc(prof["sector"])}</span>' if prof.get("sector") else ""
-            rows.append(f'<a class="row" href="{up}stocks/{esc(c.ticker)}.html"><div><div class="tk">{esc(c.ticker)}'
-                        f'</div><div class="nm">{esc(display_name(prof, c.ticker))}</div></div>'
-                        f'<div class="why">{sector}{chg}<p>{esc(c.points.get("headline"))}</p></div>'
-                        f'<span class="chev">→</span></a>')
-        noun = "stock" if len(mine) == 1 else "stocks"
-        groups.append(f'<section class="group"><div class="ghead">{badge(rating)}<span class="n">{len(mine)} {noun}'
-                      f'</span></div><div class="rows">{"".join(rows)}</div></section>')
+    rows = []
+    for c in by_rating(calls):
+        prof = profiles.get(c.ticker, {})
+        prev = previous.get(c.ticker)
+        chg = f'<div class="chg">was {esc(prev)}</div>' if prev and prev != c.rating else ""
+        rows.append(f'<a class="row" href="{up}stocks/{esc(c.ticker)}.html">'
+                    f'<div><div class="tk">{esc(c.ticker)}</div><div class="nm">{esc(display_name(prof, c.ticker))}'
+                    f'</div></div><div class="sec">{esc(prof.get("sector", ""))}</div>'
+                    f'<div class="rt t-{RATING_CLASS[c.rating]}">{esc(c.rating)}{chg}</div>'
+                    f'<div class="why">{esc(c.points.get("headline"))}</div><span class="chev">→</span></a>')
+    table = (f'<div class="rows"><div class="row head"><div>Stock</div><div>Sector</div><div>Rating</div>'
+             f'<div>Summary</div><span></span></div>{"".join(rows)}</div>')
     d = datetime.strptime(day, "%Y-%m-%d")
     return (f'<p class="eyebrow">Daily brief · {d.strftime("%A")}</p><h1>{d.strftime("%B %-d, %Y")}</h1>'
             f'<p class="lede">AI ratings for {len(calls)} US stocks, ranked from Buy to Sell. '
             f'<a href="{up}about.html">How it works</a></p>'
             f'<div class="dist"><div class="dbar">{segs}</div><div class="legend">{legend}</div></div>'
-            f'{"".join(groups)}')
+            f'<h2>All ratings · Buy to Sell</h2>{table}')
 
 
 def stock_body(ticker: str, latest: Call, history: list[dict], results: dict,
