@@ -288,3 +288,46 @@ def test_underweight_and_sell_still_reduce(env):
     assert broker.positions["AAPL"] == 25
     make(env, stub({"AAPL": "Sell"})).run_cycle(["AAPL"], "2026-10-28")
     assert broker.positions["AAPL"] == 0
+
+
+def test_parallel_analyses_keep_order_and_their_own_usage(tmp_path):
+    import threading
+    import time as _time
+
+    from trading_engine.broker import FakeBroker
+    from trading_engine.killswitch import KillSwitch
+    from trading_engine.ledger import Ledger
+    from trading_engine.runner import Runner
+    from trading_engine.usage import ThreadUsage, Usage
+
+    usage = ThreadUsage()
+    running, peak, lock = [0], [0], threading.Lock()
+
+    def analyze(ticker, trade_date, portfolio):
+        with lock:
+            running[0] += 1
+            peak[0] = max(peak[0], running[0])
+        counter = usage.counter()
+        for _ in range(len(ticker)):          # a per-ticker number of calls
+            counter.on_chat_model_start({}, [])
+        _time.sleep(0.05)
+        with lock:
+            running[0] -= 1
+        if ticker == "BAD":
+            raise RuntimeError("rate limited")
+        return {"trader_investment_plan": "", "final_trade_decision": "x"}, "Hold"
+
+    analyze.usage = usage
+    tickers = ["AAA", "BB", "CCCC", "BAD", "E"]
+    broker = FakeBroker(prices={t: 10.0 for t in tickers})
+    ledger = Ledger(tmp_path / "l.jsonl")
+    runner = Runner(broker, analyze, ledger, sectors={t: "Information Technology" for t in tickers},
+                    kill_switch=KillSwitch(tmp_path / "K"), portfolio_builder=lambda a: None, workers=3)
+    report = runner.run_cycle(tickers, "2026-11-13")
+    assert [o.ticker for o in report.outcomes] == tickers                 # report keeps the order
+    assert peak[0] >= 2                                                   # really ran side by side
+    calls = {r["data"]["ticker"]: r["data"]["llm_calls"] for r in ledger.records("usage")}
+    assert calls == {"AAA": 3, "BB": 2, "CCCC": 4, "BAD": 3, "E": 1}      # no mixing between threads
+    bad = next(o for o in report.outcomes if o.ticker == "BAD")
+    assert bad.action == "error" and "rate limited" in bad.detail
+    assert isinstance(report.outcomes[0].usage, Usage)

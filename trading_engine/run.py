@@ -69,6 +69,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="show each buy or sell and wait for y before sending it")
     p.add_argument("--settle-seconds", type=float, default=20.0,
                    help="how long to wait for fills before placing stop orders (default 20)")
+    p.add_argument("--workers", type=int, default=1,
+                   help="analyze this many tickers at once (orders are still placed one at a time)")
     p.add_argument("--ledger", help="ledger file (default: ledger.jsonl, or ledger-dryrun.jsonl with --dry-run)")
     p.add_argument("--notify", action="store_true",
                    help="send the per-ticker report to Telegram in a dry run too (a real run always sends it)")
@@ -95,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
         sectors=sectors,
         kill_switch=KillSwitch(DATA_DIR / "KILL_SWITCH"),
         dry_run=args.dry_run,
+        workers=args.workers,
         require_market_open=not args.allow_closed,
         settle_seconds=args.settle_seconds,
         confirm=ask_yes_no if args.confirm else None,

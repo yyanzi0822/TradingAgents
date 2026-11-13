@@ -72,6 +72,29 @@ class UsageCounter(BaseCallbackHandler):
             self.tokens_out += int(meta.get("output_tokens", 0) or 0)
 
 
+class ThreadUsage:
+    """One UsageCounter per thread, so tickers analyzed side by side keep their own counts.
+
+    `counter()` is this thread's counter (attach it to that thread's graph);
+    `start()` and `snapshot()` act on the calling thread's counter.
+    """
+
+    def __init__(self) -> None:
+        self._local = threading.local()
+
+    def counter(self) -> UsageCounter:
+        c = getattr(self._local, "counter", None)
+        if c is None:
+            c = self._local.counter = UsageCounter()
+        return c
+
+    def start(self) -> None:
+        self.counter().start()
+
+    def snapshot(self) -> Usage:
+        return self.counter().snapshot()
+
+
 def fmt_tokens(n: int) -> str:
     """176400 -> '17.6万'; for the Chinese report."""
     return f"{n / 10_000:.1f}万" if n >= 10_000 else str(n)

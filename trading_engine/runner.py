@@ -31,7 +31,9 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -48,7 +50,7 @@ from trading_engine.risk import RiskEngine, client_order_id
 from trading_engine.sizing import intent_from_decision
 from trading_engine.stops import StopBook
 from trading_engine.takeprofit import TakeProfitBook
-from trading_engine.usage import Usage, UsageCounter, fmt_tokens
+from trading_engine.usage import ThreadUsage, Usage, fmt_tokens
 from trading_engine.wash import WashSaleChecker
 
 logger = logging.getLogger(__name__)
@@ -155,15 +157,21 @@ def tradingagents_analyzer(config: dict | None = None, analysts: list[str] | Non
     cfg = DEFAULT_CONFIG.copy()
     cfg.update(config or {})
     kwargs = {"selected_analysts": analysts} if analysts else {}
-    counter = UsageCounter()
-    graph = TradingAgentsGraph(config=cfg, callbacks=[counter], **kwargs)
+    usage = ThreadUsage()
+    local = threading.local()
+
+    def graph():
+        # A graph keeps per-run state, so each worker thread gets its own (and its own counter).
+        g = getattr(local, "graph", None)
+        if g is None:
+            g = local.graph = TradingAgentsGraph(config=cfg, callbacks=[usage.counter()], **kwargs)
+        return g
 
     def analyze(ticker: str, trade_date: str, portfolio) -> tuple[dict, str]:
-        counter.start()
-        return graph.propagate(ticker, trade_date, portfolio=portfolio)
+        return graph().propagate(ticker, trade_date, portfolio=portfolio)
 
     # The runner reads these to log each ticker's calls and tokens.
-    analyze.usage = counter
+    analyze.usage = usage
     analyze.models = {"provider": cfg.get("llm_provider"), "deep": cfg.get("deep_think_llm"),
                       "quick": cfg.get("quick_think_llm"), "analysts": analysts or "all"}
     return analyze
@@ -201,6 +209,7 @@ class Runner:
         settle_seconds: float = 0.0,
         confirm: Callable[[str], bool] | None = None,
         notifier: Notifier | None = None,
+        workers: int = 1,
     ):
         self.broker = broker
         self.analyze = analyze
@@ -215,6 +224,8 @@ class Runner:
         self.portfolio_builder = portfolio_builder
         self.settle_seconds = settle_seconds
         self.confirm = confirm
+        # Analyses run this many at a time; orders are still placed one by one, in order.
+        self.workers = max(1, int(workers))
         self.stops = StopBook(ledger)
         self.wash = WashSaleChecker(ledger)
         # Dry runs send nothing, messages included.
@@ -297,7 +308,47 @@ class Runner:
                 return status
         return None
 
+    def _run_analysis(self, ticker: str, trade_date: str, portfolio):
+        """(final_state, signal, usage, error) for one ticker; never raises, so it can run in a pool."""
+        counter = getattr(self.analyze, "usage", None)
+        if counter is not None:
+            counter.start()
+        try:
+            final_state, signal = self.analyze(ticker, trade_date, portfolio)
+            return final_state, signal, counter.snapshot() if counter is not None else None, None
+        except Exception as exc:  # noqa: BLE001 - re-raised by the caller in the cycle's order
+            return None, None, counter.snapshot() if counter is not None else None, exc
+
+    def _record_usage(self, trade_date: str, ticker: str, decision_id: str, usage: Usage, **extra) -> None:
+        self.ledger.append("usage", {"trade_date": trade_date, "ticker": ticker, "decision_id": decision_id,
+                                     "dry_run": self.dry_run, **usage.as_dict(),
+                                     **getattr(self.analyze, "models", {}), **extra})
+
+    def _prefetch(self, tickers: list[str], trade_date: str):
+        """Start the analyses in a thread pool. They see the account as of the cycle's start;
+        sizing and risk checks later use the live account, one ticker at a time."""
+        if self.workers <= 1:
+            return None, {}
+        portfolio = self.portfolio_builder(self._account())
+        pool = ThreadPoolExecutor(max_workers=self.workers, thread_name_prefix="analyze")
+        futures = {}
+        for raw in tickers:
+            ticker = raw.strip().upper()
+            if ticker in futures or self._already_traded(trade_date, ticker) or self._stopped_out(trade_date, ticker):
+                continue
+            futures[ticker] = pool.submit(self._run_analysis, ticker, trade_date, portfolio)
+        return pool, futures
+
     def run_cycle(self, tickers: list[str], trade_date: str | None = None) -> CycleReport:
+        self._pool = None
+        try:
+            return self._run_cycle(tickers, trade_date)
+        finally:
+            if self._pool is not None:
+                self._pool.shutdown(wait=True, cancel_futures=True)
+                self._pool = None
+
+    def _run_cycle(self, tickers: list[str], trade_date: str | None = None) -> CycleReport:
         # The market's date, not this machine's: late evening in California is
         # already the next day in New York.
         trade_date = trade_date or _market_date(None)
@@ -320,6 +371,8 @@ class Runner:
         market_open = self.broker.is_market_open()
         errors = 0
         submitted: list[str] = []
+        self._pool, futures = self._prefetch(tickers, trade_date)
+        version_for = lambda t: f"{trade_date}|{t}|{version}"  # noqa: E731
 
         for raw in tickers:
             ticker = raw.strip().upper()
@@ -362,19 +415,18 @@ class Runner:
                     continue
 
                 account = self._account(open_orders)
-                counter = getattr(self.analyze, "usage", None)
-                if counter is not None:
-                    counter.start()
-                try:
-                    final_state, signal = self.analyze(ticker, trade_date, self.portfolio_builder(account))
-                finally:
-                    # Recorded even when the analysis fails: a rate-limited run still spent tokens.
-                    if counter is not None:
-                        outcome.usage = counter.snapshot()
-                        self.ledger.append("usage", {"trade_date": trade_date, "ticker": ticker,
-                                                     "decision_id": decision_id, "dry_run": self.dry_run,
-                                                     **outcome.usage.as_dict(),
-                                                     **getattr(self.analyze, "models", {})})
+                future = futures.pop(ticker, None)
+                if future is not None:
+                    final_state, signal, usage, failure = future.result()
+                else:
+                    final_state, signal, usage, failure = self._run_analysis(
+                        ticker, trade_date, self.portfolio_builder(account))
+                # Recorded even when the analysis fails: a rate-limited run still spent tokens.
+                if usage is not None:
+                    outcome.usage = usage
+                    self._record_usage(trade_date, ticker, decision_id, usage)
+                if failure is not None:
+                    raise failure
                 ai_signal = signal
                 override = rating_override(self.ledger, ticker, trade_date)
                 if override and override != signal:
@@ -487,6 +539,14 @@ class Runner:
                     self._engage_kill_switch(f"{errors} errors in cycle {trade_date}")
                     report.halted = f"auto-suspended after {errors} errors"
 
+        # Analyses that finished but were not used (kill switch, open order...) still cost tokens.
+        for ticker, future in futures.items():
+            if future.done() and not future.cancelled():
+                usage = future.result()[2]
+                if usage is not None:
+                    self._record_usage(trade_date, ticker, version_for(ticker), usage, unused=True)
+            else:
+                future.cancel()
         if not self.dry_run:
             self._settle(submitted)
         self._reconcile(report, trade_date)
