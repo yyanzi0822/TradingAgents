@@ -370,7 +370,7 @@ STR = {
         "up": "▲ from {r}", "down": "▼ from {r}", "same": "– unchanged", "back": "← Today’s ratings",
         "brief_for": "Brief for {d}", "view": "Today’s view", "company": "About the company",
         "analysis": "The analysis", "news_card": "News &amp; macro", "bull": "Bull case", "bear": "Bear case",
-        "watch": "What would change the view", "history": "Rating history", "date": "Date", "rating_col": "Rating",
+        "watch": "What to watch", "history": "Rating history", "date": "Date", "rating_col": "Rating",
         "ret": "{n}-day return", "vs": "vs S&amp;P 500", "pending": "pending",
         "archive_h1": "Every daily brief", "by_date": "By date",
         "track_empty": ("Each rating is scored by the stock's return over the next {n} trading days, against the "
@@ -394,7 +394,7 @@ STR = {
         "up": "▲ 由{r}上调", "down": "▼ 由{r}下调", "same": "– 维持", "back": "← 今日评级",
         "brief_for": "{d} 简报", "view": "今日观点", "company": "公司简介",
         "analysis": "分析详情", "news_card": "新闻与宏观", "bull": "看多理由", "bear": "看空理由",
-        "watch": "什么情况会改变看法", "history": "历史评级", "date": "日期", "rating_col": "评级",
+        "watch": "后续关注", "history": "历史评级", "date": "日期", "rating_col": "评级",
         "ret": "{n} 日涨跌", "vs": "相对标普 500", "pending": "待定",
         "archive_h1": "所有每日简报", "by_date": "按日期",
         "track_empty": ("每个评级都按之后 {n} 个交易日的涨跌来打分，并和标普 500（SPY）比较。"
