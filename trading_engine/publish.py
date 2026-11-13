@@ -35,6 +35,8 @@ SITE_NAME = "AI Stock Daily"
 HORIZON_DAYS = 5
 BULLISH, BEARISH = {"Buy", "Overweight"}, {"Underweight", "Sell"}
 RATING_CLASS = {"Buy": "buy", "Overweight": "ow", "Hold": "hold", "Underweight": "uw", "Sell": "sell"}
+RATING_ORDER = {r: i for i, r in enumerate(RATING_CLASS)}         # Buy first, Sell last
+UNIVERSE_FILE = Path(__file__).with_name("universe.json")
 
 DISCLAIMER = ("AI-generated research for education and information only. Not investment advice, not a "
               "recommendation to buy or sell any security, and not tailored to anyone's situation. The "
@@ -170,6 +172,58 @@ def make_llm() -> Callable[[str], str]:
     return ask
 
 
+# --- company profiles ------------------------------------------------------------------
+
+def universe_sector(ticker: str) -> str:
+    try:
+        return json.loads(UNIVERSE_FILE.read_text())["tickers"].get(ticker, "")
+    except (OSError, ValueError, KeyError):
+        return ""
+
+
+PROFILE_PROMPT = """Write a neutral two-sentence introduction to {name} ({ticker}) for a stock research site:
+what the company does, its main products or customers, and where it fits in its industry ({industry}).
+No opinions, no ratings, no stock-price talk, no investment language. Do not copy the description;
+write it in your own words, and never say information is missing. Return only the two sentences.
+
+COMPANY DESCRIPTION
+{summary}
+
+RESEARCH NOTES
+{notes}
+"""
+
+
+def make_profile_fn(llm: Callable[[str], str] | None) -> Callable[[str, dict | None], dict]:
+    """Company name, sector and industry from Yahoo Finance, and a short intro written by the model."""
+    def profile(ticker: str, state: dict | None) -> dict:
+        info: dict = {}
+        try:
+            import yfinance as yf
+            info = yf.Ticker(ticker).info or {}
+        except Exception as exc:  # noqa: BLE001 - fall back to the universe sector
+            logger.warning("profile for %s unavailable: %s", ticker, type(exc).__name__)
+        name = info.get("longName") or info.get("shortName") or ticker
+        out = {"name": name, "sector": universe_sector(ticker) or info.get("sector", ""),
+               "industry": info.get("industry", ""), "about": ""}
+        if llm is not None:
+            try:
+                notes = str((state or {}).get("fundamentals_report", ""))[:4000]
+                text = llm(PROFILE_PROMPT.format(name=name, ticker=ticker,
+                                                 summary=str(info.get("longBusinessSummary", ""))[:3000],
+                                                 industry=out["industry"] or out["sector"], notes=notes))
+                # Mask the name so "Holding Ltd." is not taken for holdings or a sentence end.
+                out["about"] = scrub(text.strip().replace(name, "THECOMPANY")).replace("THECOMPANY", name)[:700]
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("intro for %s failed: %s", ticker, type(exc).__name__)
+        return out
+    return profile
+
+
+def default_profile(ticker: str, state: dict | None) -> dict:
+    return {"name": ticker, "sector": universe_sector(ticker), "industry": "", "about": ""}
+
+
 # --- performance -------------------------------------------------------------------
 
 def yf_closes(tickers: list[str], start: str, end: str) -> dict[str, dict[str, float]]:
@@ -247,6 +301,13 @@ table{width:100%;border-collapse:collapse;font-size:15px}th,td{text-align:left;p
 border-bottom:1px solid var(--line)}th{color:var(--muted);font-weight:600}
 .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
 ul{margin:6px 0 0;padding-left:20px}li{margin:4px 0}
+.list{list-style:none;padding:0;margin:0}.list li{margin:0;border-bottom:1px solid var(--line)}
+.list li a{display:grid;grid-template-columns:110px 1fr 16px;gap:4px 14px;padding:14px 6px;border-radius:8px}
+.list li a:hover{background:var(--card)}.arrow{color:var(--muted);align-self:center}.list .tk{font-weight:700;font-size:17px}
+.list a{color:inherit;text-decoration:none}.list a:hover .tk{color:var(--accent)}.co{color:var(--muted);font-size:14px}
+.tag{display:inline-block;font-size:12px;padding:1px 8px;border:1px solid var(--line);border-radius:999px;
+color:var(--muted);margin-left:6px}.grp{margin:28px 0 4px;font-size:15px;color:var(--muted)}
+@media (max-width:560px){.list li a{grid-template-columns:1fr 16px}.list li a>div{grid-column:1}}
 .disclaimer{margin-top:40px;padding:14px;border:1px solid var(--line);border-radius:10px;font-size:13px;
 color:var(--muted)}.scroll{overflow-x:auto}
 """
@@ -278,22 +339,39 @@ def bullets(items: list[str]) -> str:
     return "<ul>" + "".join(f"<li>{esc(i)}</li>" for i in items) + "</ul>" if items else '<p class="muted">—</p>'
 
 
-def day_body(day: str, calls: list[Call], previous: dict[str, str], depth: int) -> str:
-    up = "../" * depth
-    cards = []
-    for c in calls:
-        prev = previous.get(c.ticker)
-        chg = f'<span class="chg">was {esc(prev)}</span>' if prev and prev != c.rating else ""
-        cards.append(f'<div class="card"><a href="{up}stocks/{esc(c.ticker)}.html"><h3>{esc(c.ticker)} '
-                     f'{badge(c.rating)}{chg}</h3></a><p>{esc(c.points.get("headline"))}</p></div>')
+def by_rating(calls: list[Call]) -> list[Call]:
+    return sorted(calls, key=lambda c: (RATING_ORDER.get(c.rating, 9), c.ticker))
+
+
+def day_body(day: str, calls: list[Call], previous: dict[str, str], depth: int,
+             profiles: dict[str, dict] | None = None) -> str:
+    """The day's ratings as one list, grouped from Buy at the top to Sell at the bottom."""
+    up, profiles = "../" * depth, profiles or {}
+    groups = []
+    for rating in RATING_CLASS:
+        mine = [c for c in by_rating(calls) if c.rating == rating]
+        if not mine:
+            continue
+        rows = []
+        for c in mine:
+            prof = profiles.get(c.ticker, {})
+            prev = previous.get(c.ticker)
+            chg = f'<span class="chg">was {esc(prev)}</span>' if prev and prev != c.rating else ""
+            name = prof.get("name") if prof.get("name") not in (None, "", c.ticker) else ""
+            sector = f'<span class="tag">{esc(prof["sector"])}</span>' if prof.get("sector") else ""
+            rows.append(f'<li><a href="{up}stocks/{esc(c.ticker)}.html"><span><span class="tk">{esc(c.ticker)}'
+                        f'</span><br>{badge(c.rating)}</span><div><div class="co">{esc(name)}{sector}{chg}</div>'
+                        f'{esc(c.points.get("headline"))}</div><span class="arrow">›</span></a></li>')
+        groups.append(f'<h2 class="grp">{badge(rating)} {len(mine)}</h2><ul class="list">{"".join(rows)}</ul>')
     when = datetime.strptime(day, "%Y-%m-%d").strftime("%A, %B %-d, %Y")
-    return (f"<h1>{esc(when)}</h1><p class='muted'>{len(calls)} stocks · ratings from a multi-agent AI "
-            f"research pipeline · <a href='{up}about.html'>how it works</a></p>"
-            f"<div class='grid'>{''.join(cards)}</div>")
+    return (f"<h1>{esc(when)}</h1><p class='muted'>{len(calls)} stocks, from Buy to Sell · ratings from a "
+            f"multi-agent AI research pipeline · <a href='{up}about.html'>how it works</a></p>"
+            f"{''.join(groups)}")
 
 
-def stock_body(ticker: str, latest: Call, history: list[dict], results: dict) -> str:
-    p = latest.points
+def stock_body(ticker: str, latest: Call, history: list[dict], results: dict,
+               profile: dict | None = None) -> str:
+    p, prof = latest.points, profile or {}
     sections = [("Technical", "technical"), ("Fundamentals", "fundamentals"), ("News & macro", "news"),
                 ("Bull case", "bull"), ("Bear case", "bear"), ("What would change the view", "watch")]
     cols = "".join(f'<div class="card"><h3>{t}</h3>{bullets(p.get(k, []))}</div>' for t, k in sections)
@@ -303,8 +381,14 @@ def stock_body(ticker: str, latest: Call, history: list[dict], results: dict) ->
         perf = (f"{r['ret']:+.1%}", f"{r['excess']:+.1%}") if r else ("pending", "")
         rows.append(f"<tr><td><a href='../days/{h['day']}.html'>{h['day']}</a></td><td>{badge(h['rating'])}</td>"
                     f"<td>{perf[0]}</td><td>{perf[1]}</td></tr>")
-    return (f"<h1>{esc(ticker)} {badge(latest.rating)}</h1><p class='muted'>Latest brief: {latest.day}</p>"
-            f"<p>{esc(p.get('headline'))}</p><div class='cols'>{cols}</div>"
+    where = " · ".join(esc(x) for x in (prof.get("sector"), prof.get("industry")) if x)
+    name = prof.get("name") if prof.get("name") not in (None, "", ticker) else ""
+    intro = (f"<div class='card'><h3>About the company</h3><p class='co' style='margin:0 0 6px'>{where}</p>"
+             f"<p style='margin:0'>{esc(prof['about'])}</p></div>") if prof.get("about") else (
+             f"<p class='co'>{where}</p>" if where else "")
+    return (f"<h1>{esc(ticker)} {badge(latest.rating)}</h1><p class='muted'>{esc(name)}"
+            f"{' · ' if name else ''}Latest brief: {latest.day}</p>{intro}"
+            f"<h2>Today's view</h2><p>{esc(p.get('headline'))}</p><div class='cols'>{cols}</div>"
             f"<h2>Rating history</h2><div class='scroll'><table><tr><th>Date</th><th>Rating</th>"
             f"<th>{HORIZON_DAYS}-day return</th><th>vs S&amp;P 500</th></tr>{''.join(rows)}</table></div>")
 
@@ -345,7 +429,8 @@ how useful it has been.</p>"""
 # --- build -------------------------------------------------------------------------------
 
 def build(site: Path, ratings: list[dict], *, llm: Callable[[str], str] | None,
-          reports_dir: Path = REPORTS_DIR, closes_fn=yf_closes, today: str | None = None) -> list[str]:
+          reports_dir: Path = REPORTS_DIR, closes_fn=yf_closes, today: str | None = None,
+          profile_fn: Callable[[str, dict | None], dict] = default_profile) -> list[str]:
     """Write the site; returns the pages written. Key points are cached under data/."""
     data_dir = site / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -375,6 +460,17 @@ def build(site: Path, ratings: list[dict], *, llm: Callable[[str], str] | None,
     if not calls:
         return []
 
+    # Company profiles, made once per ticker and cached.
+    profiles_path = data_dir / "companies.json"
+    profiles: dict[str, dict] = json.loads(profiles_path.read_text()) if profiles_path.exists() else {}
+    for t in sorted({c.ticker for c in calls}):
+        if not profiles.get(t, {}).get("about") or profile_fn is default_profile:
+            latest = max(c.day for c in calls if c.ticker == t)
+            fresh = profile_fn(t, load_state(t, latest, reports_dir))
+            if fresh.get("about") or t not in profiles:
+                profiles[t] = fresh
+    profiles_path.write_text(json.dumps(profiles, indent=1))
+
     # Track record.
     results: list[dict] = []
     first = min(c.day for c in calls)
@@ -399,19 +495,19 @@ def build(site: Path, ratings: list[dict], *, llm: Callable[[str], str] | None,
     previous: dict[str, str] = {}
     for d in days:
         todays = [c for c in calls if c.day == d]
-        write(f"days/{d}.html", page(d, day_body(d, todays, previous, 1), 1))
+        write(f"days/{d}.html", page(d, day_body(d, todays, previous, 1, profiles), 1))
         prev_snapshot = dict(previous)
         previous.update({c.ticker: c.rating for c in todays})
         if d == days[-1]:
-            write("index.html", page("Today", day_body(d, todays, prev_snapshot, 0)))
+            write("index.html", page("Today", day_body(d, todays, prev_snapshot, 0, profiles)))
     archive = "".join(f"<tr><td><a href='days/{d}.html'>{d}</a></td><td>"
-                      f"{' '.join(f'{esc(c.ticker)} {badge(c.rating)}' for c in calls if c.day == d)}</td></tr>"
+                      f"{' '.join(f'{esc(c.ticker)} {badge(c.rating)}' for c in by_rating([c for c in calls if c.day == d]))}</td></tr>"
                       for d in reversed(days))
     write("archive.html", page("Archive", f"<h1>Archive</h1><div class='scroll'><table>{archive}</table></div>"))
     for t in sorted({c.ticker for c in calls}):
         mine = [c for c in calls if c.ticker == t]
         write(f"stocks/{t}.html", page(t, stock_body(t, mine[-1], [r for r in history if r["ticker"] == t],
-                                                     by_key), 1))
+                                                     by_key, profiles.get(t)), 1))
     write("performance.html", page("Track record", performance_body(scorecard(results), results)))
     write("about.html", page("About", ABOUT))
     write(".nojekyll", "")
@@ -444,7 +540,8 @@ def main(argv: list[str]) -> int:
     args = p.parse_args(argv)
 
     site = Path(args.site).expanduser()
-    written = build(site, ledger_ratings(Path(args.ledger)), llm=None if args.no_llm else make_llm())
+    llm = None if args.no_llm else make_llm()
+    written = build(site, ledger_ratings(Path(args.ledger)), llm=llm, profile_fn=make_profile_fn(llm))
     print(f"wrote {len(written)} files to {site}")
     if args.push and written:
         print(push(site, f"Briefs for {date.today().isoformat()}"))

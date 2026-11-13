@@ -125,3 +125,38 @@ def test_disclaimer_is_on_every_page(tmp_path):
           closes_fn=lambda *a: {}, today="2026-11-12")
     for page in site.rglob("*.html"):
         assert publish.DISCLAIMER[:40] in page.read_text(), page
+
+
+def test_day_list_runs_from_buy_to_sell_with_company_profiles(tmp_path):
+    led, reports, site = tmp_path / "ledger.jsonl", tmp_path / "reports", tmp_path / "site"
+    day = "2026-11-12"
+    picks = {"AAA": "Sell", "BBB": "Buy", "CCC": "Hold", "DDD": "Overweight"}
+    write_ledger(led, [{"trade_date": day, "ticker": t, "signal": r} for t, r in picks.items()])
+    for t, r in picks.items():
+        write_state(reports, t, day, r)
+
+    def profile(ticker, state):
+        return {"name": f"{ticker} Corp", "sector": "Industrials", "industry": "Widgets",
+                "about": f"{ticker} Corp makes widgets."}
+
+    build(site, ledger_ratings(led), llm=None, reports_dir=reports, closes_fn=lambda *a: {},
+          today=day, profile_fn=profile)
+    index = (site / "index.html").read_text()
+    order = [index.index(f"stocks/{t}.html") for t in ("BBB", "DDD", "CCC", "AAA")]
+    assert order == sorted(order)
+    assert "BBB Corp" in index and "Industrials" in index
+    stock = (site / "stocks" / "BBB.html").read_text()
+    assert "About the company" in stock and "BBB Corp makes widgets." in stock and "Widgets" in stock
+    assert json.loads((site / "data" / "companies.json").read_text())["AAA"]["name"] == "AAA Corp"
+
+
+def test_company_intro_keeps_a_name_with_holding_in_it(monkeypatch):
+    import sys
+    import types
+    fake = types.SimpleNamespace(Ticker=lambda t: types.SimpleNamespace(
+        info={"longName": "Credo Technology Group Holding Ltd", "industry": "Semiconductors"}))
+    monkeypatch.setitem(sys.modules, "yfinance", fake)
+    prof = publish.make_profile_fn(lambda prompt: "Credo Technology Group Holding Ltd makes chips. "
+                                                  "It serves data centers.")("CRDO", None)
+    assert prof["about"].startswith("Credo Technology Group Holding Ltd makes chips.")
+    assert prof["industry"] == "Semiconductors"
