@@ -328,7 +328,7 @@ border-radius:2px;margin-right:6px;vertical-align:1px}
 .row.head{padding:10px 20px;background:var(--bg);font-size:12px;font-weight:600;color:var(--muted);
 text-transform:uppercase;letter-spacing:.06em}.row.head:hover{background:var(--bg)}
 .sec{font-size:13px;color:var(--muted)}.why{font-size:14.5px;line-height:1.5}
-.rt{font-weight:700;font-size:15px}.rt .chg{font-weight:500}.t-buy{color:var(--buy)}.t-ow{color:var(--ow)}
+.rt{font-weight:700;font-size:15px}.rt .chg{font-weight:600;font-size:12px;margin-top:2px}.chg.up{color:var(--buy)}.chg.down{color:var(--sell)}.t-buy{color:var(--buy)}.t-ow{color:var(--ow)}
 .t-hold{color:var(--hold)}.t-uw{color:var(--uw)}.t-sell{color:var(--sell)}
 .group{margin-top:32px}.ghead{display:flex;align-items:center;gap:10px;margin-bottom:10px}
 .ghead .n{font-size:13px;color:var(--faint)}
@@ -409,6 +409,18 @@ def display_name(prof: dict, ticker: str) -> str:
     return "" if name == ticker else name
 
 
+def trend(rating: str, prev: str | None) -> str:
+    """Arrow against the previous day's rating: up if it improved toward Buy, down if it fell; nothing without one."""
+    if not prev or prev not in RATING_ORDER:
+        return ""
+    move = RATING_ORDER[prev] - RATING_ORDER.get(rating, RATING_ORDER[prev])
+    if move > 0:
+        return f'<div class="chg up" title="Up from {esc(prev)}">▲ from {esc(prev)}</div>'
+    if move < 0:
+        return f'<div class="chg down" title="Down from {esc(prev)}">▼ from {esc(prev)}</div>'
+    return '<div class="chg" title="Same as the previous day">– unchanged</div>'
+
+
 def day_body(day: str, calls: list[Call], previous: dict[str, str], depth: int,
              profiles: dict[str, dict] | None = None) -> str:
     """The day's ratings as one table, sorted from Buy at the top to Sell at the bottom."""
@@ -420,7 +432,7 @@ def day_body(day: str, calls: list[Call], previous: dict[str, str], depth: int,
     for c in by_rating(calls):
         prof = profiles.get(c.ticker, {})
         prev = previous.get(c.ticker)
-        chg = f'<div class="chg">was {esc(prev)}</div>' if prev and prev != c.rating else ""
+        chg = trend(c.rating, prev)
         rows.append(f'<a class="row" href="{up}stocks/{esc(c.ticker)}.html">'
                     f'<div><div class="tk">{esc(c.ticker)}</div><div class="nm">{esc(display_name(prof, c.ticker))}'
                     f'</div></div><div class="sec">{esc(prof.get("sector", ""))}</div>'

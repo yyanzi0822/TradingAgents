@@ -96,7 +96,7 @@ def test_build_writes_pages_without_account_data(tmp_path, monkeypatch):
             "days/2026-11-11.html", "days/2026-11-12.html"} <= set(written)
     assert "stocks/ZZZ.html" not in written
     index = (site / "index.html").read_text()
-    assert "was Buy" in index                                   # rating change is shown
+    assert "▼ from Buy" in index                                # rating change is shown
     assert "&lt;b&gt;margins&lt;/b&gt;" in index                # model text is escaped
     assert "100,000" not in "".join(p.read_text() for p in site.rglob("*.html"))
     assert len(calls) == 3
@@ -160,3 +160,10 @@ def test_company_intro_keeps_a_name_with_holding_in_it(monkeypatch):
                                                   "It serves data centers.")("CRDO", None)
     assert prof["about"].startswith("Credo Technology Group Holding Ltd makes chips.")
     assert prof["industry"] == "Semiconductors"
+
+
+def test_trend_arrow_against_the_previous_day():
+    assert publish.trend("Hold", None) == ""                       # no earlier rating: nothing
+    assert "▲ from Sell" in publish.trend("Hold", "Sell")
+    assert "▼ from Buy" in publish.trend("Overweight", "Buy")
+    assert "unchanged" in publish.trend("Sell", "Sell")
