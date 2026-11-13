@@ -178,6 +178,52 @@ def key_points(state: dict, ticker: str, rating: str, llm: Callable[[str], str] 
     return clean
 
 
+VERDICT_PROMPT = """The research team rated {ticker} {rating} on a five-step scale
+(Buy, Overweight, Hold, Underweight, Sell). From the notes below, explain how they weighed the bull case
+against the bear case to land on {rating}.
+
+Rules: write about the stock only, never any portfolio, account, cash or position; describe, never instruct;
+plain neutral English; use numbers from the notes, invent nothing.
+
+Return only JSON:
+{{"verdict": "2-3 sentences: which arguments carried the most weight and why the balance lands on {rating}",
+  "not_higher": "one sentence: what keeps it from {higher}" ,
+  "not_lower": "one sentence: what keeps it from {lower}"}}
+Use an empty string for not_higher when the rating is Buy and for not_lower when it is Sell.
+
+=== Final decision ===
+{final}
+=== Bull and bear debate ===
+{debate}
+"""
+
+
+def verdict(state: dict, ticker: str, rating: str, llm: Callable[[str], str] | None) -> dict:
+    """Why the rating landed where it did, and why not one step either side; empty without a model."""
+    if llm is None or rating not in RATING_ORDER:
+        return {}
+    order = list(RATING_CLASS)
+    i = order.index(rating)
+    debate = state.get("investment_debate_state") or {}
+    debate = debate.get("history", "") if isinstance(debate, dict) else str(debate)
+    try:
+        raw = llm(VERDICT_PROMPT.format(
+            ticker=ticker, rating=rating, higher=order[i - 1] if i > 0 else "—",
+            lower=order[i + 1] if i + 1 < len(order) else "—",
+            final=str(state.get("final_trade_decision", ""))[:6000], debate=str(debate)[:6000]))
+        m = re.search(r"\{.*\}", raw, re.S)
+        got = json.loads(m.group(0)) if m else {}
+    except Exception as exc:  # noqa: BLE001 - the page just leaves the section out
+        logger.warning("verdict for %s failed: %s", ticker, type(exc).__name__)
+        return {}
+    out = {k: scrub(got.get(k) or "") for k in ("verdict", "not_higher", "not_lower")}
+    if i == 0:
+        out["not_higher"] = ""
+    if i == len(order) - 1:
+        out["not_lower"] = ""
+    return out if out["verdict"] else {}
+
+
 LEVELS = ("Strong", "Good", "Mixed", "Weak", "Poor")
 LEVEL_CLASS = dict(zip(LEVELS, ("buy", "ow", "hold", "uw", "sell"), strict=True))
 DIMENSIONS = (("technical", "Technical"), ("fundamentals", "Fundamentals"), ("news", "News"))
@@ -368,9 +414,9 @@ STR = {
         "rating": "Final rating", "summary": "Summary", "stock_az": "Stock A–Z", "report": "Full report",
         "note": "Technical, Fundamentals and News are graded separately by the AI on a five-step scale: {scale}.",
         "up": "▲ from {r}", "down": "▼ from {r}", "same": "– unchanged", "back": "← Today’s ratings",
-        "brief_for": "Brief for {d}", "view": "Today’s view", "company": "About the company",
+        "brief_for": "Brief for {d}", "view": "Summary", "company": "About the company",
         "analysis": "The analysis", "news_card": "News &amp; macro", "bull": "Bull case", "bear": "Bear case",
-        "watch": "What to watch", "history": "Rating history", "date": "Date", "rating_col": "Rating",
+        "watch": "What to watch", "why": "Why {r}", "not_higher": "Why not {r}", "not_lower": "Why not {r}", "history": "Rating history", "date": "Date", "rating_col": "Rating",
         "ret": "{n}-day return", "vs": "vs S&amp;P 500", "pending": "pending",
         "archive_h1": "Every daily brief", "by_date": "By date",
         "track_empty": ("Each rating is scored by the stock's return over the next {n} trading days, against the "
@@ -392,9 +438,9 @@ STR = {
         "rating": "最终评级", "summary": "结论", "stock_az": "股票代码 A–Z", "report": "完整报告",
         "note": "技术面、基本面和新闻面由 AI 分别打分，共五档：{scale}。",
         "up": "▲ 由{r}上调", "down": "▼ 由{r}下调", "same": "– 维持", "back": "← 今日评级",
-        "brief_for": "{d} 简报", "view": "今日观点", "company": "公司简介",
+        "brief_for": "{d} 简报", "view": "结论", "company": "公司简介",
         "analysis": "分析详情", "news_card": "新闻与宏观", "bull": "看多理由", "bear": "看空理由",
-        "watch": "后续关注", "history": "历史评级", "date": "日期", "rating_col": "评级",
+        "watch": "后续关注", "why": "为什么是{r}", "not_higher": "为什么不是{r}", "not_lower": "为什么不是{r}", "history": "历史评级", "date": "日期", "rating_col": "评级",
         "ret": "{n} 日涨跌", "vs": "相对标普 500", "pending": "待定",
         "archive_h1": "所有每日简报", "by_date": "按日期",
         "track_empty": ("每个评级都按之后 {n} 个交易日的涨跌来打分，并和标普 500（SPY）比较。"
@@ -498,7 +544,10 @@ a:hover{text-decoration-color:var(--fg)}
 .lang{display:inline-flex;border:1px solid var(--input);border-radius:8px;padding:2px;gap:2px;box-shadow:var(--shadow-xs);flex:none}
 .lang a{font-size:12.5px;font-weight:500;color:var(--muted);text-decoration:none;padding:3px 9px;border-radius:6px}
 .lang a:hover{color:var(--fg)}.lang a.on{background:var(--secondary);color:var(--fg)}
-.stack{display:grid;gap:16px}h2+.stack{margin-top:16px}
+.stack{display:grid;gap:16px}.verdict{margin-top:16px}
+.sides{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}
+.sides h3{font-size:13px;color:var(--muted);font-weight:500;margin:0 0 6px}.sides p{margin:0;font-size:14px;line-height:1.55}
+@media (max-width:640px){.sides{grid-template-columns:1fr}}h2+.stack{margin-top:16px}
 .wrap{max-width:1180px;margin:0 auto;padding:0 24px}
 .top{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--bg) 92%,transparent);
 backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
@@ -568,17 +617,17 @@ color:var(--fg);border-top:1px solid var(--line);text-decoration:none;transition
 .shead{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px 24px}
 .shead h1{display:flex;align-items:center;gap:12px;font-size:36px}.shead h1 .pill{font-size:13px;padding:3px 10px}
 .shead .nm{font-size:15px;margin-top:6px}.asof{font-size:13px;color:var(--muted)}
-.view{margin-top:28px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:20px 24px;
+.view{margin-top:16px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:20px 24px;
 box-shadow:var(--shadow);position:relative;overflow:hidden}
 .view::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--hold-bar)}
-.view p{margin:0;font-size:17px;line-height:1.55;letter-spacing:-.01em}.view .eyebrow{margin-bottom:6px;font-size:13px}
+.view p{margin:0;font-size:15px;line-height:1.65}.view .eyebrow{margin-bottom:6px;font-size:13px}
 .v-buy::before{background:var(--buy-bar)}.v-ow::before{background:var(--ow-bar)}.v-uw::before{background:var(--uw-bar)}
 .v-sell::before{background:var(--sell-bar)}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:20px 24px;box-shadow:var(--shadow)}
 h2+.card,h2+.grid3,h2+.tbl,h2+.rows{margin-top:16px}
-.about p{margin:0;line-height:1.65}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.about p{margin:0;font-size:14.5px;line-height:1.65}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
 .grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-top:16px}
-.card ul{margin:0;padding-left:18px}.card li{margin:8px 0;font-size:14px;line-height:1.55}
+.card ul{margin:0;padding-left:18px}.card li{margin:8px 0;font-size:14.5px;line-height:1.6}
 .card li::marker{color:var(--faint)}.bull h3 span{color:var(--buy)}.bear h3 span{color:var(--sell)}.watch{margin-top:16px}
 table{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
 th,td{text-align:left;padding:10px 16px;border-top:1px solid var(--line)}
@@ -783,15 +832,33 @@ def stock_body(ticker: str, latest: Call, history: list[dict], results: dict,
             f'<h1>{esc(ticker)} {badge(latest.rating, lang)}</h1>'
             f'<div class="nm">{esc(display_name(prof, ticker))}</div></div>'
             f'<div class="asof">{tr(lang, "brief_for", d=latest.day)}</div></div>'
-            f'<div class="view v-{cls}"><p class="eyebrow">{tr(lang, "view")}</p>'
-            f'<p>{esc(zh_text(p, "headline", lang))}</p></div>'
+            f'<h2>{tr(lang, "view")}</h2><div class="view v-{cls}"><p>{esc(zh_text(p, "headline", lang))}</p></div>'
             f'{about}<h2>{tr(lang, "analysis")}</h2><div class="stack">{card(tr(lang, "technical"), "technical")}'
             f'{card(tr(lang, "fundamentals"), "fundamentals")}{card(tr(lang, "news_card"), "news")}</div>'
             f'<div class="grid2">{card(tr(lang, "bull"), "bull", "bull")}{card(tr(lang, "bear"), "bear", "bear")}</div>'
+            f'{verdict_card(p, latest.rating, lang)}'
             f'{card(tr(lang, "watch"), "watch", "watch")}'
             f'<h2>{tr(lang, "history")}</h2><div class="tbl"><table><tr><th>{tr(lang, "date")}</th>'
             f'<th>{tr(lang, "rating_col")}</th><th>{tr(lang, "ret", n=HORIZON_DAYS)}</th><th>{tr(lang, "vs")}</th></tr>'
             f'{"".join(rows)}</table></div>')
+
+
+def verdict_card(points: dict, rating: str, lang: str = "en") -> str:
+    """How the bull and bear cases add up to the final rating, and why not one step either side."""
+    v = {k: plain(x) for k, x in (points.get("verdict") or {}).items()}
+    if lang == "zh":
+        v = {**v, **((points.get("zh") or {}).get("verdict") or {})}
+    if not v.get("verdict"):
+        return ""
+    order = list(RATING_CLASS)
+    i = order.index(rating) if rating in order else 2
+    sides = []
+    for key, j in (("not_higher", i - 1), ("not_lower", i + 1)):
+        if v.get(key) and 0 <= j < len(order):
+            sides.append(f'<div><h3>{tr(lang, key, r=esc(rating_word(order[j], lang)))}</h3><p>{esc(v[key])}</p></div>')
+    return (f'<h2>{tr(lang, "why", r=esc(rating_word(rating, lang)))}</h2>'
+            f'<div class="view verdict v-{RATING_CLASS.get(rating, "hold")}"><p>{esc(v["verdict"])}</p>'
+            f'{f"<div class=sides>{chr(10).join(sides)}</div>" if sides else ""}</div>')
 
 
 def performance_body(card: list[dict], results: list[dict], lang: str = "en") -> str:
@@ -861,9 +928,19 @@ def build(site: Path, ratings: list[dict], *, llm: Callable[[str], str] | None,
             points, dirty = key_points(state, r["ticker"], r["rating"], llm), True
         if "scores" not in points and state is not None and llm is not None:
             points["scores"], dirty = dimension_scores(state, r["ticker"], llm), True
+        if "verdict" not in points and llm is not None:
+            state = state or load_state(r["ticker"], r["day"], reports_dir)
+            if state is not None:
+                points["verdict"], dirty = verdict(state, r["ticker"], r["rating"], llm), True
+        if points.get("verdict") and "zh" in points and "verdict" not in points["zh"] and llm is not None:
+            zh = translate_zh({k: v for k, v in points["verdict"].items() if v}, llm)
+            if zh:
+                points["zh"]["verdict"], dirty = zh, True
         if "zh" not in points and llm is not None:
             zh = translate_zh({k: points[k] for k in PUBLIC_KEYS if points.get(k)}, llm)
             if zh:
+                if points.get("verdict"):
+                    zh["verdict"] = translate_zh({k: v for k, v in points["verdict"].items() if v}, llm) or {}
                 points["zh"], dirty = zh, True
         if dirty:
             cache.parent.mkdir(parents=True, exist_ok=True)

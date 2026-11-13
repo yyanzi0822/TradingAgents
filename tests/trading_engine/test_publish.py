@@ -99,9 +99,9 @@ def test_build_writes_pages_without_account_data(tmp_path, monkeypatch):
     assert "▼ from Buy" in index                                # rating change is shown
     assert "&lt;b&gt;margins&lt;/b&gt;" in index                # model text is escaped
     assert "100,000" not in "".join(p.read_text() for p in site.rglob("*.html"))
-    assert len(calls) == 9                                      # key points, scores, translation
+    assert len(calls) == 12                                     # points, scores, verdict, translation
     build(site, ratings, llm=llm, reports_dir=reports, closes_fn=lambda *a: {}, today="2026-11-12")
-    assert len(calls) == 9                                      # all cached
+    assert len(calls) == 12                                     # all cached
     assert json.loads((site / "data" / "ratings.json").read_text())[-1]["ticker"] == "BBB"
 
 
@@ -238,3 +238,23 @@ def test_translation_keeps_the_shape_or_gives_up():
     assert publish.translate_zh({"headline": "x", "bull": ["a"]}, lambda p: "not json") is None
     got = publish.translate_zh({"headline": "x", "bull": ["a"]}, lambda p: '{"headline": "甲", "bull": "乙"}')
     assert got == {"headline": "甲"}                                    # a list that came back as text is dropped
+
+
+def test_verdict_explains_the_rating_and_shows_on_the_stock_page(tmp_path):
+    assert publish.verdict({}, "X", "Hold", None) == {}
+    got = publish.verdict({}, "X", "Buy", lambda p: '{"verdict": "Growth wins.", "not_higher": "x", "not_lower": "y"}')
+    assert got == {"verdict": "Growth wins.", "not_higher": "", "not_lower": "y"}     # nothing above Buy
+    reports, site = tmp_path / "r", tmp_path / "s"
+    write_state(reports, "AAA", "2026-11-12", "Overweight")
+
+    def llm(prompt):
+        if "how they weighed" in prompt:
+            return ('{"verdict": "Revenue guidance outweighs margin worries for Overweight.", '
+                    '"not_higher": "Cash flow is still weak.", "not_lower": "Growth is accelerating."}')
+        return '{"headline": "AAA is rated Overweight."}'
+
+    build(site, [{"day": "2026-11-12", "ticker": "AAA", "rating": "Overweight"}], llm=llm, reports_dir=reports,
+          closes_fn=lambda *a: {}, today="2026-11-12")
+    page = (site / "stocks" / "AAA.html").read_text()
+    assert "<h2>Why Moderate Buy</h2>" in page and "<h2>Summary</h2>" in page and "margin worries for Moderate Buy." in page
+    assert "Why not Buy" in page and "Why not Hold" in page
