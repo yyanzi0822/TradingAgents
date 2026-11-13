@@ -282,12 +282,12 @@ def scorecard(results: list[dict]) -> list[dict]:
 CSS = """
 :root{--bg:#f7f7f5;--surface:#fff;--fg:#111827;--muted:#6b7280;--faint:#9ca3af;--line:#e5e7eb;
 --accent:#0f766e;--accent-soft:#ccfbf1;
---buy:#15803d;--buy-bg:#dcfce7;--buy-bar:#16a34a;--ow:#3f6212;--ow-bg:#ecfccb;--ow-bar:#84cc16;
+--buy:#15803d;--buy-bg:#dcfce7;--buy-bar:#16a34a;--ow:#3f6212;--ow-bg:#ecfccb;--ow-bar:#65a30d;
 --hold:#4b5563;--hold-bg:#f3f4f6;--hold-bar:#9ca3af;--uw:#b45309;--uw-bg:#fef3c7;--uw-bar:#f59e0b;
 --sell:#b91c1c;--sell-bg:#fee2e2;--sell-bar:#dc2626;--shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06)}
 @media (prefers-color-scheme:dark){:root{--bg:#0b0d10;--surface:#14171c;--fg:#f3f4f6;--muted:#9ca3af;
 --faint:#6b7280;--line:#262a31;--accent:#5eead4;--accent-soft:rgba(94,234,212,.12);
---buy:#4ade80;--buy-bg:rgba(74,222,128,.12);--ow:#bef264;--ow-bg:rgba(190,242,100,.12);--hold:#d1d5db;
+--buy:#4ade80;--buy-bg:rgba(74,222,128,.12);--ow:#8fbf7a;--ow-bg:rgba(143,191,122,.12);--hold:#d1d5db;
 --hold-bg:rgba(209,213,219,.10);--uw:#fbbf24;--uw-bg:rgba(251,191,36,.12);--sell:#f87171;
 --sell-bg:rgba(248,113,113,.12);--shadow:none}}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
