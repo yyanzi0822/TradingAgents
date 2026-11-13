@@ -156,6 +156,54 @@ def key_points(state: dict, ticker: str, rating: str, llm: Callable[[str], str] 
     return clean
 
 
+LEVELS = ("Strong", "Good", "Mixed", "Weak", "Poor")
+LEVEL_CLASS = dict(zip(LEVELS, ("buy", "ow", "hold", "uw", "sell"), strict=True))
+DIMENSIONS = (("technical", "Technical"), ("fundamentals", "Fundamentals"), ("news", "News"))
+
+SCORES_PROMPT = """Grade {ticker} on three separate dimensions from the research notes below.
+Use exactly one of: Strong, Good, Mixed, Weak, Poor.
+- technical: price trend, momentum and moving averages (Strong = clear uptrend, Poor = clear downtrend)
+- fundamentals: growth, profitability, cash flow, balance sheet and valuation together
+- news: whether recent company news and macro backdrop are favorable for the stock
+Grade each dimension on its own evidence, not on the final rating.
+Return only JSON: {{"technical": "...", "fundamentals": "...", "news": "..."}}
+
+=== Technical ===
+{market}
+=== Fundamentals ===
+{fundamentals}
+=== News and macro ===
+{news}
+"""
+
+
+def dimension_scores(state: dict, ticker: str, llm: Callable[[str], str] | None) -> dict:
+    """Strong/Good/Mixed/Weak/Poor for technical, fundamentals and news; empty without a model."""
+    if llm is None:
+        return {}
+    try:
+        raw = llm(SCORES_PROMPT.format(ticker=ticker, market=str(state.get("market_report", ""))[:6000],
+                                       fundamentals=str(state.get("fundamentals_report", ""))[:8000],
+                                       news=str(state.get("news_report", ""))[:6000]))
+        m = re.search(r"\{.*\}", raw, re.S)
+        got = json.loads(m.group(0)) if m else {}
+    except Exception as exc:  # noqa: BLE001 - the site shows a dash instead
+        logger.warning("scores for %s failed: %s", ticker, type(exc).__name__)
+        return {}
+    out = {}
+    for key, _ in DIMENSIONS:
+        level = str(got.get(key, "")).strip().capitalize()
+        if level in LEVELS:
+            out[key] = level
+    return out
+
+
+def level_tag(level: str | None) -> str:
+    if not level:
+        return '<span class="lv muted">—</span>'
+    return f'<span class="lv t-{LEVEL_CLASS[level]}">{esc(level)}</span>'
+
+
 def make_llm() -> Callable[[str], str]:
     from tradingagents.default_config import DEFAULT_CONFIG
     from tradingagents.llm_clients.factory import create_tier_client
@@ -294,7 +342,7 @@ CSS = """
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 Inter,-apple-system,BlinkMacSystemFont,
 "Segoe UI",Roboto,sans-serif;font-feature-settings:"cv11","ss01";-webkit-font-smoothing:antialiased}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
-.wrap{max-width:1040px;margin:0 auto;padding:0 20px}
+.wrap{max-width:1160px;margin:0 auto;padding:0 20px}
 .top{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--bg) 85%,transparent);
 backdrop-filter:saturate(180%) blur(12px);border-bottom:1px solid var(--line)}
 .bar{display:flex;align-items:center;justify-content:space-between;gap:16px;height:60px}
@@ -327,13 +375,16 @@ box-shadow:var(--shadow)}.dbar{display:flex;height:10px;border-radius:999px;over
 border-radius:2px;margin-right:6px;vertical-align:1px}
 .row.head{padding:10px 20px;background:var(--bg);font-size:12px;font-weight:600;color:var(--muted);
 text-transform:uppercase;letter-spacing:.06em}.row.head:hover{background:var(--bg)}
-.sec{font-size:13px;color:var(--muted)}.why{font-size:14.5px;line-height:1.5}
-.rt{font-weight:700;font-size:15px}.rt .chg{font-weight:600;font-size:12px;margin-top:2px}.chg.up{color:var(--buy)}.chg.down{color:var(--sell)}.t-buy{color:var(--buy)}.t-ow{color:var(--ow)}
+.sec{font-size:12px;color:var(--faint);margin-top:2px}
+.scs{display:grid;grid-template-columns:92px 112px 80px;gap:0 8px;align-items:center}.lbl{display:none}
+.lv{font-weight:400;font-size:13.5px}.note{font-size:12.5px;color:var(--muted);margin:12px 2px 0}
+.ch{display:flex;justify-content:space-between;align-items:baseline;gap:10px}.why{font-size:14.5px;line-height:1.5}
+.rt{font-weight:400;font-size:15px}.rt .chg{font-weight:400;font-size:12px;margin-top:2px}.chg.up{color:var(--buy)}.chg.down{color:var(--sell)}.t-buy{color:var(--buy)}.t-ow{color:var(--ow)}
 .t-hold{color:var(--hold)}.t-uw{color:var(--uw)}.t-sell{color:var(--sell)}
 .group{margin-top:32px}.ghead{display:flex;align-items:center;gap:10px;margin-bottom:10px}
 .ghead .n{font-size:13px;color:var(--faint)}
 .rows{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow)}
-.row{display:grid;grid-template-columns:190px 160px 110px 1fr 20px;gap:6px 20px;align-items:center;padding:16px 20px;
+.row{display:grid;grid-template-columns:190px 112px 300px 1fr 16px;gap:6px 18px;align-items:center;padding:16px 20px;
 color:var(--fg);border-top:1px solid var(--line);transition:background .12s}
 .row:first-child{border-top:0}.row:hover{background:var(--bg);text-decoration:none}.row:hover .chev{color:var(--fg);transform:translateX(2px)}
 .tk{font-weight:700;font-size:17px;letter-spacing:-.01em}.nm{font-size:13px;color:var(--muted);line-height:1.4;margin-top:2px}
@@ -363,8 +414,10 @@ footer{border-top:1px solid var(--line);margin-top:56px;padding:24px 0 48px;font
 footer .wrap>div{max-width:760px}
 @media (max-width:820px){.grid3{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}}
 @media (max-width:640px){h1{font-size:28px}.shead h1{font-size:32px}main{padding-top:28px}
-.row{grid-template-columns:1fr auto;padding:14px 16px;gap:4px 12px}.row .sec{grid-column:1;grid-row:2}
-.row .rt{grid-column:2;grid-row:1;text-align:right}.row .why{grid-column:1/3}.row .chev,.row.head{display:none}
+.row{grid-template-columns:1fr auto;padding:14px 16px;gap:8px 12px}
+.row .rt{grid-column:2;grid-row:1;text-align:right}.row .scs{grid-column:1/3;display:flex;flex-wrap:wrap;gap:6px 16px}
+.row .lbl{display:inline;color:var(--muted);font-size:12px;margin-right:5px}
+.row .why{grid-column:1/3}.row .chev,.row.head{display:none}
 .bar{height:auto;padding-top:12px;padding-bottom:12px;flex-direction:column;align-items:flex-start;gap:8px}nav{max-width:100%}}
 """
 
@@ -433,13 +486,20 @@ def day_body(day: str, calls: list[Call], previous: dict[str, str], depth: int,
         prof = profiles.get(c.ticker, {})
         prev = previous.get(c.ticker)
         chg = trend(c.rating, prev)
+        scores = c.points.get("scores") or {}
+        cells = "".join(f'<div class="sc"><span class="lbl">{label}</span>{level_tag(scores.get(key))}</div>'
+                        for key, label in DIMENSIONS)
         rows.append(f'<a class="row" href="{up}stocks/{esc(c.ticker)}.html">'
                     f'<div><div class="tk">{esc(c.ticker)}</div><div class="nm">{esc(display_name(prof, c.ticker))}'
-                    f'</div></div><div class="sec">{esc(prof.get("sector", ""))}</div>'
+                    f'</div><div class="sec">{esc(prof.get("sector", ""))}</div></div>'
                     f'<div class="rt t-{RATING_CLASS[c.rating]}">{esc(c.rating)}{chg}</div>'
+                    f'<div class="scs">{cells}</div>'
                     f'<div class="why">{esc(c.points.get("headline"))}</div><span class="chev">→</span></a>')
-    table = (f'<div class="rows"><div class="row head"><div>Stock</div><div>Sector</div><div>Rating</div>'
-             f'<div>Summary</div><span></span></div>{"".join(rows)}</div>')
+    table = (f'<div class="rows"><div class="row head"><div>Stock</div><div>Rating</div><div class="scs">'
+             f'<div>Technical</div><div>Fundamentals</div><div>News</div></div>'
+             f'<div>Summary</div><span></span></div>{"".join(rows)}</div>'
+             f'<p class="note">Technical, Fundamentals and News are graded separately by the AI on a five-step '
+             f'scale: {" · ".join(level_tag(lv) for lv in LEVELS)}.</p>')
     d = datetime.strptime(day, "%Y-%m-%d")
     return (f'<p class="eyebrow">Daily brief · {d.strftime("%A")}</p><h1>{d.strftime("%B %-d, %Y")}</h1>'
             f'<p class="lede">AI ratings for {len(calls)} US stocks, ranked from Buy to Sell. '
@@ -455,8 +515,12 @@ def stock_body(ticker: str, latest: Call, history: list[dict], results: dict,
     where = " · ".join(esc(x) for x in (prof.get("sector"), prof.get("industry")) if x)
     about = (f'<h2>About the company</h2><div class="card about"><p>{esc(prof["about"])}</p></div>'
              if prof.get("about") else "")
-    card = lambda title, key, extra="": (f'<div class="card {extra}"><h3>{title}</h3>'  # noqa: E731
-                                         f'{bullets(p.get(key, []))}</div>')
+    scores = p.get("scores") or {}
+
+    def card(title: str, key: str, extra: str = "") -> str:
+        grade = level_tag(scores[key]) if key in scores else ""
+        return (f'<div class="card {extra}"><h3 class="ch"><span>{title}</span>{grade}</h3>'
+                f'{bullets(p.get(key, []))}</div>')
     rows = []
     for h in sorted(history, key=lambda r: r["day"], reverse=True):
         r = results.get((h["day"], ticker))
@@ -532,13 +596,17 @@ def build(site: Path, ratings: list[dict], *, llm: Callable[[str], str] | None,
     calls: list[Call] = []
     for r in history:
         cache = data_dir / r["day"] / f"{r['ticker']}.json"
-        if cache.exists():
-            points = json.loads(cache.read_text())
-        else:
+        points = json.loads(cache.read_text()) if cache.exists() else None
+        state = None
+        if points is None or ("scores" not in points and llm is not None):
             state = load_state(r["ticker"], r["day"], reports_dir)
-            if state is None:
+            if state is None and points is None:
                 continue
+        if points is None:
             points = key_points(state, r["ticker"], r["rating"], llm)
+        if "scores" not in points and state is not None and llm is not None:
+            points["scores"] = dimension_scores(state, r["ticker"], llm)
+        if state is not None:
             cache.parent.mkdir(parents=True, exist_ok=True)
             cache.write_text(json.dumps(points, indent=1))
         calls.append(Call(r["day"], r["ticker"], r["rating"], points))

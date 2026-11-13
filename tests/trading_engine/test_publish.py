@@ -99,9 +99,9 @@ def test_build_writes_pages_without_account_data(tmp_path, monkeypatch):
     assert "▼ from Buy" in index                                # rating change is shown
     assert "&lt;b&gt;margins&lt;/b&gt;" in index                # model text is escaped
     assert "100,000" not in "".join(p.read_text() for p in site.rglob("*.html"))
-    assert len(calls) == 3
+    assert len(calls) == 6                                      # key points + scores per stock
     build(site, ratings, llm=llm, reports_dir=reports, closes_fn=lambda *a: {}, today="2026-11-12")
-    assert len(calls) == 3                                      # key points are cached
+    assert len(calls) == 6                                      # both are cached
     assert json.loads((site / "data" / "ratings.json").read_text())[-1]["ticker"] == "BBB"
 
 
@@ -167,3 +167,22 @@ def test_trend_arrow_against_the_previous_day():
     assert "▲ from Sell" in publish.trend("Hold", "Sell")
     assert "▼ from Buy" in publish.trend("Overweight", "Buy")
     assert "unchanged" in publish.trend("Sell", "Sell")
+
+
+def test_dimension_scores_are_validated_and_shown(tmp_path):
+    assert publish.dimension_scores({}, "X", None) == {}
+    got = publish.dimension_scores({}, "X", lambda p: '{"technical": "weak", "fundamentals": "Great", "news": "Good"}')
+    assert got == {"technical": "Weak", "news": "Good"}                 # unknown levels dropped
+    reports, site = tmp_path / "r", tmp_path / "s"
+    write_state(reports, "AAA", "2026-11-12", "Hold")
+
+    def llm(prompt):
+        if "Grade AAA" in prompt:
+            return '{"technical": "Poor", "fundamentals": "Strong", "news": "Mixed"}'
+        return '{"headline": "Rated Hold.", "technical": ["t"]}'
+
+    build(site, [{"day": "2026-11-12", "ticker": "AAA", "rating": "Hold"}], llm=llm, reports_dir=reports,
+          closes_fn=lambda *a: {}, today="2026-11-12")
+    index = (site / "index.html").read_text()
+    assert 't-sell">Poor' in index and 't-buy">Strong' in index and 't-hold">Mixed' in index
+    assert 't-sell">Poor' in (site / "stocks" / "AAA.html").read_text()
