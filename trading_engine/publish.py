@@ -280,37 +280,90 @@ def scorecard(results: list[dict]) -> list[dict]:
 # --- render ---------------------------------------------------------------------------
 
 CSS = """
-:root{--bg:#fbfaf7;--fg:#1d1d1f;--muted:#6b6b70;--card:#fff;--line:#e7e4dd;--accent:#2f5d50;
---buy:#1f7a4d;--ow:#4c9a6a;--hold:#8a8a8f;--uw:#c27c2c;--sell:#b5402f}
-@media (prefers-color-scheme:dark){:root{--bg:#141414;--fg:#ececec;--muted:#9a9aa0;--card:#1d1d1f;
---line:#2c2c2e;--accent:#8cc5b0}}
-a{color:var(--accent)}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
-font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-.wrap{max-width:980px;margin:0 auto;padding:24px 16px 64px}
-header{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:baseline;border-bottom:1px solid var(--line);
-padding-bottom:14px;margin-bottom:22px}header .brand{font-weight:700;font-size:20px;color:var(--fg);
-text-decoration:none}nav a{color:var(--muted);text-decoration:none;margin-right:16px}nav a:hover{color:var(--fg)}
-h1{font-size:28px;margin:0 0 4px}h2{font-size:20px;margin:32px 0 12px}.muted{color:var(--muted)}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
-.card h3{margin:0 0 6px;font-size:18px}.card a{color:inherit;text-decoration:none}
-.badge{display:inline-block;padding:2px 10px;border-radius:999px;color:#fff;font-size:13px;font-weight:600}
-.buy{background:var(--buy)}.ow{background:var(--ow)}.hold{background:var(--hold)}.uw{background:var(--uw)}
-.sell{background:var(--sell)}.chg{font-size:13px;color:var(--muted);margin-left:6px}
-table{width:100%;border-collapse:collapse;font-size:15px}th,td{text-align:left;padding:8px 6px;
-border-bottom:1px solid var(--line)}th{color:var(--muted);font-weight:600}
-.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
-ul{margin:6px 0 0;padding-left:20px}li{margin:4px 0}
-.list{list-style:none;padding:0;margin:0}.list li{margin:0;border-bottom:1px solid var(--line)}
-.list li a{display:grid;grid-template-columns:110px 1fr 16px;gap:4px 14px;padding:14px 6px;border-radius:8px}
-.list li a:hover{background:var(--card)}.arrow{color:var(--muted);align-self:center}.list .tk{font-weight:700;font-size:17px}
-.list a{color:inherit;text-decoration:none}.list a:hover .tk{color:var(--accent)}.co{color:var(--muted);font-size:14px}
-.tag{display:inline-block;font-size:12px;padding:1px 8px;border:1px solid var(--line);border-radius:999px;
-color:var(--muted);margin-left:6px}.grp{margin:28px 0 4px;font-size:15px;color:var(--muted)}
-@media (max-width:560px){.list li a{grid-template-columns:1fr 16px}.list li a>div{grid-column:1}}
-.disclaimer{margin-top:40px;padding:14px;border:1px solid var(--line);border-radius:10px;font-size:13px;
-color:var(--muted)}.scroll{overflow-x:auto}
+:root{--bg:#f7f7f5;--surface:#fff;--fg:#111827;--muted:#6b7280;--faint:#9ca3af;--line:#e5e7eb;
+--accent:#0f766e;--accent-soft:#ccfbf1;
+--buy:#15803d;--buy-bg:#dcfce7;--buy-bar:#16a34a;--ow:#3f6212;--ow-bg:#ecfccb;--ow-bar:#84cc16;
+--hold:#4b5563;--hold-bg:#f3f4f6;--hold-bar:#9ca3af;--uw:#b45309;--uw-bg:#fef3c7;--uw-bar:#f59e0b;
+--sell:#b91c1c;--sell-bg:#fee2e2;--sell-bar:#dc2626;--shadow:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06)}
+@media (prefers-color-scheme:dark){:root{--bg:#0b0d10;--surface:#14171c;--fg:#f3f4f6;--muted:#9ca3af;
+--faint:#6b7280;--line:#262a31;--accent:#5eead4;--accent-soft:rgba(94,234,212,.12);
+--buy:#4ade80;--buy-bg:rgba(74,222,128,.12);--ow:#bef264;--ow-bg:rgba(190,242,100,.12);--hold:#d1d5db;
+--hold-bg:rgba(209,213,219,.10);--uw:#fbbf24;--uw-bg:rgba(251,191,36,.12);--sell:#f87171;
+--sell-bg:rgba(248,113,113,.12);--shadow:none}}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 Inter,-apple-system,BlinkMacSystemFont,
+"Segoe UI",Roboto,sans-serif;font-feature-settings:"cv11","ss01";-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.wrap{max-width:1040px;margin:0 auto;padding:0 20px}
+.top{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--bg) 85%,transparent);
+backdrop-filter:saturate(180%) blur(12px);border-bottom:1px solid var(--line)}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:16px;height:60px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:16px;color:var(--fg);letter-spacing:-.01em}
+.brand:hover{text-decoration:none}.logo{width:26px;height:26px;border-radius:7px;background:var(--fg);color:var(--bg);
+display:grid;place-items:center;font-size:12px;font-weight:800}
+nav{display:flex;gap:4px;overflow-x:auto}nav a{color:var(--muted);font-weight:500;font-size:14px;padding:6px 10px;
+border-radius:8px;white-space:nowrap}nav a:hover{color:var(--fg);background:var(--surface);text-decoration:none}
+nav a.on{color:var(--fg);background:var(--surface);box-shadow:var(--shadow)}
+main{padding:40px 0 24px}
+h1{font-size:34px;line-height:1.15;letter-spacing:-.025em;margin:0;font-weight:700}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600;margin:40px 0 14px}
+h3{font-size:15px;margin:0 0 8px;font-weight:600}
+.eyebrow{font-size:13px;font-weight:600;color:var(--accent);letter-spacing:.02em;margin:0 0 8px}
+.lede{color:var(--muted);font-size:16px;margin:10px 0 0}.muted{color:var(--muted)}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:12.5px;
+font-weight:600;white-space:nowrap}.pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.p-buy{color:var(--buy);background:var(--buy-bg)}.p-ow{color:var(--ow);background:var(--ow-bg)}
+.p-hold{color:var(--hold);background:var(--hold-bg)}.p-uw{color:var(--uw);background:var(--uw-bg)}
+.p-sell{color:var(--sell);background:var(--sell-bg)}
+.chip{display:inline-block;font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:6px;
+padding:1px 7px;margin-right:6px;white-space:nowrap}
+.chg{font-size:12px;color:var(--muted);white-space:nowrap}
+.dist{margin-top:28px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px 20px;
+box-shadow:var(--shadow)}.dbar{display:flex;height:10px;border-radius:999px;overflow:hidden;gap:2px;background:var(--line)}
+.dbar span{display:block}.b-buy{background:var(--buy-bar)}.b-ow{background:var(--ow-bar)}.b-hold{background:var(--hold-bar)}
+.b-uw{background:var(--uw-bar)}.b-sell{background:var(--sell-bar)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:12px;font-size:13px;color:var(--muted)}
+.legend b{color:var(--fg);font-weight:600;margin-left:4px}.legend i{display:inline-block;width:8px;height:8px;
+border-radius:2px;margin-right:6px;vertical-align:1px}
+.group{margin-top:32px}.ghead{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.ghead .n{font-size:13px;color:var(--faint)}
+.rows{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow)}
+.row{display:grid;grid-template-columns:200px 1fr 20px;gap:6px 24px;align-items:center;padding:16px 20px;
+color:var(--fg);border-top:1px solid var(--line);transition:background .12s}
+.row:first-child{border-top:0}.row:hover{background:var(--bg);text-decoration:none}.row:hover .chev{color:var(--fg);transform:translateX(2px)}
+.tk{font-weight:700;font-size:17px;letter-spacing:-.01em}.nm{font-size:13px;color:var(--muted);line-height:1.4;margin-top:2px}
+.why p{margin:4px 0 0;font-size:14.5px;line-height:1.5}
+.chev{color:var(--faint);font-size:18px;transition:transform .12s,color .12s}
+.back{display:inline-block;font-size:14px;color:var(--muted);margin-bottom:18px}
+.shead{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px 24px}
+.shead h1{display:flex;align-items:center;gap:14px;font-size:40px}.shead h1 .pill{font-size:14px;padding:5px 12px}
+.shead .nm{font-size:16px;margin-top:6px;white-space:normal}.asof{font-size:13px;color:var(--faint)}
+.view{margin-top:28px;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--hold-bar);
+border-radius:12px;padding:18px 22px;box-shadow:var(--shadow)}.view p{margin:0;font-size:18px;line-height:1.5;
+letter-spacing:-.01em}.view .eyebrow{color:var(--muted)}
+.v-buy{border-left-color:var(--buy-bar)}.v-ow{border-left-color:var(--ow-bar)}.v-uw{border-left-color:var(--uw-bar)}
+.v-sell{border-left-color:var(--sell-bar)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow)}
+.about p{margin:0;color:var(--fg)}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:14px}
+.card ul{margin:0;padding-left:18px}.card li{margin:6px 0;font-size:14.5px}.card li::marker{color:var(--faint)}
+.bull h3{color:var(--buy)}.bear h3{color:var(--sell)}.watch{margin-top:14px}
+table{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:12px 16px;border-top:1px solid var(--line)}
+th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.06em;border-top:0;
+background:var(--bg)}.tbl{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:auto;
+box-shadow:var(--shadow)}.pos{color:var(--buy)}.neg{color:var(--sell)}
+.prose{max-width:680px}.prose p{font-size:16px;line-height:1.7}
+footer{border-top:1px solid var(--line);margin-top:56px;padding:24px 0 48px;font-size:12.5px;color:var(--faint);line-height:1.6}
+footer .wrap>div{max-width:760px}
+@media (max-width:820px){.grid3{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}}
+@media (max-width:640px){h1{font-size:28px}.shead h1{font-size:32px}main{padding-top:28px}
+.row{grid-template-columns:1fr 20px;padding:14px 16px}.row .why{grid-column:1}.row .chev{grid-row:1/3;grid-column:2}
+.bar{height:auto;padding:12px 0;flex-direction:column;align-items:flex-start;gap:8px}nav{max-width:100%}}
 """
+
+NAV = [("Today", "index.html"), ("Archive", "archive.html"), ("Track record", "performance.html"),
+       ("About", "about.html")]
 
 
 def esc(s) -> str:
@@ -318,21 +371,23 @@ def esc(s) -> str:
 
 
 def badge(rating: str) -> str:
-    return f'<span class="badge {RATING_CLASS.get(rating, "hold")}">{esc(rating)}</span>'
+    return f'<span class="pill p-{RATING_CLASS.get(rating, "hold")}">{esc(rating)}</span>'
 
 
 def page(title: str, body: str, depth: int = 0) -> str:
     up = "../" * depth
+    nav = "".join(f'<a href="{up}{href}"{" class=on" if name == title else ""}>{name}</a>' for name, href in NAV)
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(title)} · {SITE_NAME}</title><meta name="description" content="Daily AI equity research briefs.">
-<style>{CSS}</style></head><body><div class="wrap">
-<header><a class="brand" href="{up}index.html">{SITE_NAME}</a>
-<nav><a href="{up}index.html">Today</a><a href="{up}archive.html">Archive</a>
-<a href="{up}performance.html">Track record</a><a href="{up}about.html">About</a></nav></header>
-{body}
-<div class="disclaimer"><strong>Disclaimer.</strong> {esc(DISCLAIMER)}</div>
-</div></body></html>"""
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>{CSS}</style></head><body>
+<header class="top"><div class="wrap bar"><a class="brand" href="{up}index.html"><span class="logo">AI</span>{SITE_NAME}</a>
+<nav>{nav}</nav></div></header>
+<main class="wrap">{body}</main>
+<footer><div class="wrap"><div><strong>Disclaimer.</strong> {esc(DISCLAIMER)}</div></div></footer>
+</body></html>"""
 
 
 def bullets(items: list[str]) -> str:
@@ -343,10 +398,18 @@ def by_rating(calls: list[Call]) -> list[Call]:
     return sorted(calls, key=lambda c: (RATING_ORDER.get(c.rating, 9), c.ticker))
 
 
+def display_name(prof: dict, ticker: str) -> str:
+    name = prof.get("name") or ""
+    return "" if name == ticker else name
+
+
 def day_body(day: str, calls: list[Call], previous: dict[str, str], depth: int,
              profiles: dict[str, dict] | None = None) -> str:
     """The day's ratings as one list, grouped from Buy at the top to Sell at the bottom."""
     up, profiles = "../" * depth, profiles or {}
+    counts = {r: sum(c.rating == r for c in calls) for r in RATING_CLASS}
+    segs = "".join(f'<span class="b-{RATING_CLASS[r]}" style="flex:{n}"></span>' for r, n in counts.items() if n)
+    legend = "".join(f'<span><i class="b-{RATING_CLASS[r]}"></i>{r}<b>{n}</b></span>' for r, n in counts.items())
     groups = []
     for rating in RATING_CLASS:
         mine = [c for c in by_rating(calls) if c.rating == rating]
@@ -357,40 +420,52 @@ def day_body(day: str, calls: list[Call], previous: dict[str, str], depth: int,
             prof = profiles.get(c.ticker, {})
             prev = previous.get(c.ticker)
             chg = f'<span class="chg">was {esc(prev)}</span>' if prev and prev != c.rating else ""
-            name = prof.get("name") if prof.get("name") not in (None, "", c.ticker) else ""
-            sector = f'<span class="tag">{esc(prof["sector"])}</span>' if prof.get("sector") else ""
-            rows.append(f'<li><a href="{up}stocks/{esc(c.ticker)}.html"><span><span class="tk">{esc(c.ticker)}'
-                        f'</span><br>{badge(c.rating)}</span><div><div class="co">{esc(name)}{sector}{chg}</div>'
-                        f'{esc(c.points.get("headline"))}</div><span class="arrow">›</span></a></li>')
-        groups.append(f'<h2 class="grp">{badge(rating)} {len(mine)}</h2><ul class="list">{"".join(rows)}</ul>')
-    when = datetime.strptime(day, "%Y-%m-%d").strftime("%A, %B %-d, %Y")
-    return (f"<h1>{esc(when)}</h1><p class='muted'>{len(calls)} stocks, from Buy to Sell · ratings from a "
-            f"multi-agent AI research pipeline · <a href='{up}about.html'>how it works</a></p>"
-            f"{''.join(groups)}")
+            sector = f'<span class="chip">{esc(prof["sector"])}</span>' if prof.get("sector") else ""
+            rows.append(f'<a class="row" href="{up}stocks/{esc(c.ticker)}.html"><div><div class="tk">{esc(c.ticker)}'
+                        f'</div><div class="nm">{esc(display_name(prof, c.ticker))}</div></div>'
+                        f'<div class="why">{sector}{chg}<p>{esc(c.points.get("headline"))}</p></div>'
+                        f'<span class="chev">→</span></a>')
+        noun = "stock" if len(mine) == 1 else "stocks"
+        groups.append(f'<section class="group"><div class="ghead">{badge(rating)}<span class="n">{len(mine)} {noun}'
+                      f'</span></div><div class="rows">{"".join(rows)}</div></section>')
+    d = datetime.strptime(day, "%Y-%m-%d")
+    return (f'<p class="eyebrow">Daily brief · {d.strftime("%A")}</p><h1>{d.strftime("%B %-d, %Y")}</h1>'
+            f'<p class="lede">AI ratings for {len(calls)} US stocks, ranked from Buy to Sell. '
+            f'<a href="{up}about.html">How it works</a></p>'
+            f'<div class="dist"><div class="dbar">{segs}</div><div class="legend">{legend}</div></div>'
+            f'{"".join(groups)}')
 
 
 def stock_body(ticker: str, latest: Call, history: list[dict], results: dict,
                profile: dict | None = None) -> str:
     p, prof = latest.points, profile or {}
-    sections = [("Technical", "technical"), ("Fundamentals", "fundamentals"), ("News & macro", "news"),
-                ("Bull case", "bull"), ("Bear case", "bear"), ("What would change the view", "watch")]
-    cols = "".join(f'<div class="card"><h3>{t}</h3>{bullets(p.get(k, []))}</div>' for t, k in sections)
+    cls = RATING_CLASS.get(latest.rating, "hold")
+    where = " · ".join(esc(x) for x in (prof.get("sector"), prof.get("industry")) if x)
+    about = (f'<h2>About the company</h2><div class="card about"><p>{esc(prof["about"])}</p></div>'
+             if prof.get("about") else "")
+    card = lambda title, key, extra="": (f'<div class="card {extra}"><h3>{title}</h3>'  # noqa: E731
+                                         f'{bullets(p.get(key, []))}</div>')
     rows = []
     for h in sorted(history, key=lambda r: r["day"], reverse=True):
         r = results.get((h["day"], ticker))
-        perf = (f"{r['ret']:+.1%}", f"{r['excess']:+.1%}") if r else ("pending", "")
+        if r:
+            perf = "".join(f'<td class="{"pos" if v >= 0 else "neg"}">{v:+.1%}</td>' for v in (r["ret"], r["excess"]))
+        else:
+            perf = '<td class="muted">pending</td><td></td>'
         rows.append(f"<tr><td><a href='../days/{h['day']}.html'>{h['day']}</a></td><td>{badge(h['rating'])}</td>"
-                    f"<td>{perf[0]}</td><td>{perf[1]}</td></tr>")
-    where = " · ".join(esc(x) for x in (prof.get("sector"), prof.get("industry")) if x)
-    name = prof.get("name") if prof.get("name") not in (None, "", ticker) else ""
-    intro = (f"<div class='card'><h3>About the company</h3><p class='co' style='margin:0 0 6px'>{where}</p>"
-             f"<p style='margin:0'>{esc(prof['about'])}</p></div>") if prof.get("about") else (
-             f"<p class='co'>{where}</p>" if where else "")
-    return (f"<h1>{esc(ticker)} {badge(latest.rating)}</h1><p class='muted'>{esc(name)}"
-            f"{' · ' if name else ''}Latest brief: {latest.day}</p>{intro}"
-            f"<h2>Today's view</h2><p>{esc(p.get('headline'))}</p><div class='cols'>{cols}</div>"
-            f"<h2>Rating history</h2><div class='scroll'><table><tr><th>Date</th><th>Rating</th>"
-            f"<th>{HORIZON_DAYS}-day return</th><th>vs S&amp;P 500</th></tr>{''.join(rows)}</table></div>")
+                    f"{perf}</tr>")
+    return (f'<a class="back" href="../index.html">← Today’s ratings</a>'
+            f'<div class="shead"><div>{f"<p class=eyebrow>{where}</p>" if where else ""}'
+            f'<h1>{esc(ticker)} {badge(latest.rating)}</h1>'
+            f'<div class="nm">{esc(display_name(prof, ticker))}</div></div>'
+            f'<div class="asof">Brief for {latest.day}</div></div>'
+            f'<div class="view v-{cls}"><p class="eyebrow">Today’s view</p><p>{esc(p.get("headline"))}</p></div>'
+            f'{about}<h2>The analysis</h2><div class="grid3">{card("Technical", "technical")}'
+            f'{card("Fundamentals", "fundamentals")}{card("News &amp; macro", "news")}</div>'
+            f'<div class="grid2">{card("Bull case", "bull", "bull")}{card("Bear case", "bear", "bear")}</div>'
+            f'{card("What would change the view", "watch", "watch")}'
+            f'<h2>Rating history</h2><div class="tbl"><table><tr><th>Date</th><th>Rating</th>'
+            f'<th>{HORIZON_DAYS}-day return</th><th>vs S&amp;P 500</th></tr>{"".join(rows)}</table></div>')
 
 
 def performance_body(card: list[dict], results: list[dict]) -> str:
@@ -410,20 +485,20 @@ def performance_body(card: list[dict], results: list[dict]) -> str:
     return (f"<h1>Track record</h1><p class='muted'>Return from the close on the rating day to the close "
             f"{HORIZON_DAYS} trading days later; “vs S&amp;P 500” subtracts SPY over the same days. "
             f"“Right” means a bullish call beat SPY or a bearish call lagged it. Small samples are noisy.</p>"
-            f"<div class='scroll'><table><tr><th>Ratings</th><th>Calls</th><th>Avg return</th>"
+            f"<div class='tbl'><table><tr><th>Ratings</th><th>Calls</th><th>Avg return</th>"
             f"<th>Avg vs S&amp;P 500</th><th>Right</th></tr>{rows}</table></div>"
-            f"<h2>Recent scored calls</h2><div class='scroll'><table><tr><th>Date</th><th>Stock</th><th>Rating</th>"
+            f"<h2>Recent scored calls</h2><div class='tbl'><table><tr><th>Date</th><th>Stock</th><th>Rating</th>"
             f"<th>Return</th><th>vs S&amp;P 500</th></tr>{recent}</table></div>")
 
 
-ABOUT = f"""<h1>About</h1>
+ABOUT = f"""<div class="prose"><p class="eyebrow">About</p><h1>How {SITE_NAME} works</h1>
 <p>{SITE_NAME} publishes one brief per stock each US trading day. A team of AI agents reads price data and
 technical indicators, company filings and financial statements, and recent news and macro data. Bull and bear
 researchers argue the case, a trader drafts a plan, risk reviewers challenge it, and a portfolio-manager agent
 gives the final five-level rating: Buy, Overweight, Hold, Underweight or Sell.</p>
 <p>The research uses the open-source TradingAgents framework. Briefs are generated automatically and are not
 reviewed by a person before publishing. Every rating is scored on the Track record page so you can judge
-how useful it has been.</p>"""
+how useful it has been.</p></div>"""
 
 
 # --- build -------------------------------------------------------------------------------
@@ -503,7 +578,7 @@ def build(site: Path, ratings: list[dict], *, llm: Callable[[str], str] | None,
     archive = "".join(f"<tr><td><a href='days/{d}.html'>{d}</a></td><td>"
                       f"{' '.join(f'{esc(c.ticker)} {badge(c.rating)}' for c in by_rating([c for c in calls if c.day == d]))}</td></tr>"
                       for d in reversed(days))
-    write("archive.html", page("Archive", f"<h1>Archive</h1><div class='scroll'><table>{archive}</table></div>"))
+    write("archive.html", page("Archive", f"<p class='eyebrow'>Archive</p><h1>Every daily brief</h1><h2>By date</h2><div class='tbl'><table>{archive}</table></div>"))
     for t in sorted({c.ticker for c in calls}):
         mine = [c for c in calls if c.ticker == t]
         write(f"stocks/{t}.html", page(t, stock_body(t, mine[-1], [r for r in history if r["ticker"] == t],
